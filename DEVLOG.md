@@ -1071,5 +1071,25 @@ what the riders look like.
 * Voice Clips: the bottom screen showed the previous slot's name and description - it was drawn with the
   selection from before the button press. Fixed.
 
+## Stage 78: camera judder along rails and walls; the landing bounce
+* Camera judder: a per-frame camera log (TEST_CAMLOG: camera, target, rider and each correction stage, read
+  from RAM by the harness) showed the camera jumping 80-190 units in and out on alternate frames wherever a
+  correction ray grazed an edge - along the city's rails, ledges and fences, which is where grinds happen:
+  * keeping the camera above the ground: the ray caught a ledge's top on one frame and missed it on the next
+    (now up quickly, down gently, and nothing over 150 units: that is an overhang, not the ground);
+  * keeping the rider in sight: the same at wall edges (now in over ~3 frames, out gently);
+  * the chase camera's own ray pulled its state in, so the next step's ray missed and it eased out again; the
+    drawn camera now comes in and the chase state is left alone;
+  * stage 77's near-plane rays: one surface seen by several rays was pushed once per ray (now once, eased).
+  Over a Metro City run the camera's frame-to-frame jumps (rider respawns aside) of more than 80 units went
+  from 27 to 2; the largest from 186 to 116.
+* The bounce on landing from a height (city): dropping fast onto flat ground - off a building, at the foot of a
+  steep drop - the forward obstacle ray met the floor ahead and the deflection reflected the fall into a jump
+  back up. A floor (normal within 45 degrees of up) met while falling fast now turns the velocity along it,
+  keeping the speed; the ground collision lands the rider. (Bot runs on eleven courses: finish times and crashes
+  as before, within the bots' run-to-run spread.)
+* The superpipe: hosttest/pipetest.c rides BHP1 wall to wall (optionally spinning) and prints each air's
+  launch, time, turn, landing and speed after; no change made yet - see the reply for what it found.
+
 ## Not done yet / next
 * Download Play (see stage 41).

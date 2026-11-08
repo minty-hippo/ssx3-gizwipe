@@ -396,6 +396,16 @@ static void deflect(Phys *p, s32 n[3])                             // 0x4f62c (g
     s32 q = p->speed ? d / (p->speed * p->speed) : 0;
     if (!p->air && (q < 0 ? -q : q) <= 0x3f) return;
     s32 sp = vlen_v(p->vel);
+    if (d < 0 && n[1] >= 0x2d41 && p->vel[1] < -0x4000) {
+        // port: dropping fast onto a floor (normal within 45 degrees of up) - off a building in the city, at the foot
+        // of a steep drop - the reflection turned the fall into a jump back up (the rider bounced on landing): the
+        // velocity slides along the floor instead, keeping its speed, and the ground collision lands the rider
+        s32 dn = (s32)(((s64)n[0] * p->vel[0] + (s64)n[1] * p->vel[1] + (s64)n[2] * p->vel[2]) / 16384);
+        for (int k = 0; k < 3; k++) p->vel[k] -= (s32)((s64)dn * n[k] / 16384);
+        u32 l2 = vlen_v(p->vel) | 1;
+        for (int k = 0; k < 3; k++) p->vel[k] = p->vel[k] * sp / (s32)l2;
+        return;
+    }
     if (d < 0) {
         s32 rf[3]; reflect(rf, p->vel, n);
         for (int k = 0; k < 3; k++) p->vel[k] += n[k] * sp * 10 / 16384 + rf[k];

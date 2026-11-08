@@ -1193,7 +1193,14 @@ static void load_best(int *best)
 // farther. The camera sits that far back along the velocity (pitch held within ~41 degrees; below a walking pace,
 // behind the rider's facing), 96 higher in the air, eased 1/8 across and 1/12 vertically, then set back to exactly
 // that distance from the target.
-static float camT[3], camC[3], camD, camT0[3], camC0[3]; static bool cam_ok;
+static float camT[3], camC[3], camD, camT0[3], camC0[3]; static bool cam_ok, cam_occ_reset;
+static float camV[3], camV0[3];
+#ifdef TEST_CAMLOG
+float camdbg[4][3];
+#define CAMDBG(i, v) memcpy(camdbg[i], v, 12)
+#else
+#define CAMDBG(i, v)
+#endif   // port: the camera as drawn - camC kept clear of the course (the state camC is not)
 static void cam_step(const Phys *p, int setting, bool pipe)
 {
     static const int SET[4] = { 288, 352, 416, 416 };             // 0xb0180: Options camera Near / Mid / Far
@@ -1216,6 +1223,8 @@ static void cam_step(const Phys *p, int setting, bool pipe)
         memcpy(camT, T, sizeof(T)); camD = d;
         for (int k = 0; k < 3; k++) camC[k] = T[k] - dir[k] * d;
         memcpy(camT0, camT, sizeof(camT)); memcpy(camC0, camC, sizeof(camC)); cam_ok = true;
+        memcpy(camV, camC, sizeof(camC)); memcpy(camV0, camC, sizeof(camC));
+        cam_occ_reset = true;
         return;
     }
     for (int k = 0; k < 3; k++) camT[k] = (camT[k] * 3 + T[k]) / 4;
@@ -1228,14 +1237,26 @@ static void cam_step(const Phys *p, int setting, bool pipe)
     // 0x75808 (0x6829c against the course): a ray from the target out to the camera; if the course is in the way
     // (surface types 3 / 7 / 11 / 15 excepted, table 0xb0140) the camera comes in to just in front of it. Without
     // this the camera went through tunnel roofs and walls, and the course behind them showed as holes.
+    // port: the camera drawn (camV) comes in at once when the course is in the way and goes back out over a few
+    // steps; the chase state (camC) is left alone, so the ray's answer does not depend on where it put the camera
+    // the step before. Pulling camC itself in made the next ray miss, the camera eased out, the ray hit again: along
+    // rails, fences and the city's walls the camera jumped 80-180 units back and forth (judder).
+    static float occ_d;
+    if (cam_occ_reset) { occ_d = 0; cam_occ_reset = false; }
+    memcpy(camV0, camV, sizeof(camV)); memcpy(camV, camC, sizeof(camC));
     if (p->trk && l > 1) {
         s32 a[3], b[3], h[3], n[3]; int sf = 0;
+        float want = 1e9f;
         for (int k = 0; k < 3; k++) { a[k] = (s32)camT[k]; b[k] = (s32)(camC[k] - e[k] / l * 24); }
         if (track_ray((Track *)p->trk, a, b, h, n, &sf) && (sf & 3) != 3) {
             float hd = 0; for (int k = 0; k < 3; k++) hd += (h[k] - camT[k]) * (h[k] - camT[k]);
             hd = sqrtf(hd) - 24; if (hd < 16) hd = 16;
-            for (int k = 0; k < 3; k++) camC[k] = camT[k] - e[k] / l * hd;
+            want = hd;
         }
+        if (occ_d <= 0) occ_d = want < l ? want : l;
+        if (want < occ_d) occ_d = want;
+        else { float to = want < l ? want : l; occ_d += (to - occ_d) / 5; }
+        if (occ_d < l) for (int k = 0; k < 3; k++) camV[k] = camT[k] - e[k] / l * occ_d;
     }
 }
 
@@ -1254,6 +1275,7 @@ static void cam_intro(const Phys *p, int t)
     camC[0] = pos[0] + ox; camC[1] = pos[1] + by + 150; camC[2] = pos[2] + oz;
     camD = 117;
     if (!cam_ok) { memcpy(camT0, camT, sizeof(camT)); memcpy(camC0, camC, sizeof(camC)); cam_ok = true; }
+    memcpy(camV0, camC0, sizeof(camC)); memcpy(camV, camC, sizeof(camC)); cam_occ_reset = true;
 }
 
 // ---- replay (results "Replay": 0x778a4 starts it, 0x77fd8 steps it - A pauses, R fast-forwards x4). The player's
@@ -1281,8 +1303,9 @@ static void cam_replay(const Track *t, const Phys *p)
         C[1] = (C[1] > T[1] ? C[1] : T[1]) + 150;
     }
     memcpy(camT0, camT, sizeof(camT)); memcpy(camC0, camC, sizeof(camC));
-    if (!rp_cam_ok) { memcpy(camT, T, sizeof(T)); memcpy(camC, C, sizeof(C)); memcpy(camT0, T, sizeof(T)); memcpy(camC0, C, sizeof(C)); rp_cam_ok = true; return; }
+    if (!rp_cam_ok) { memcpy(camT, T, sizeof(T)); memcpy(camC, C, sizeof(C)); memcpy(camT0, T, sizeof(T)); memcpy(camC0, C, sizeof(C)); memcpy(camV, C, sizeof(C)); memcpy(camV0, C, sizeof(C)); rp_cam_ok = true; return; }
     for (int k = 0; k < 3; k++) { camT[k] = (camT[k] * 3 + T[k]) / 4; camC[k] = (camC[k] * 3 + C[k]) / 4; }
+    memcpy(camV0, camC0, sizeof(camC)); memcpy(camV, camC, sizeof(camC));
 }
 
 // ----[...]splash (eaanim.bmp, 75 frames of 256 x 240, with EASplash.wav: 2.5 s, so 30 fps), shown
@@ -1877,26 +1900,44 @@ int main(int argc, char **argv)
         if (!cam_ok && !replay) { if (race == R_INTRO) cam_intro(&ph, 0); else cam_step(&ph, g_opt.cam, ph.pipe); }
         if (replay && !rp_cam_ok) { if (rp_cam == 0) cam_replay(&trk, &rpg.ph); else { cam_ok = false; cam_step(&rpg.ph, g_opt.cam, rpg.ph.pipe); } }
         float ce[3], tg[3];
-        for (int k = 0; k < 3; k++) { ce[k] = camC0[k] + (camC[k] - camC0[k]) * al; tg[k] = camT0[k] + (camT[k] - camT0[k]) * al; }
+        for (int k = 0; k < 3; k++) { ce[k] = camV0[k] + (camV[k] - camV0[k]) * al; tg[k] = camT0[k] + (camT[k] - camT0[k]) * al; }
+        CAMDBG(0, ce);
         float fx, fz;
         { float dx = tg[0] - ce[0], dz = tg[2] - ce[2], l = sqrtf(dx * dx + dz * dz); if (l < 1) l = 1; fx = dx / l; fz = dz / l; }
         {   // keep the camera above the ground under it. The ray starts near the rider's height, not high above the
             // camera: from 2000 units up it found the top of a tunnel roof and lifted the camera over the tunnel.
             float top = (ce[1] > rp[1] ? ce[1] : rp[1]) + 160;
             s32 a[3] = { (s32)ce[0], (s32)top, (s32)ce[2] }, b[3] = { (s32)ce[0], (s32)ce[1] - 3000, (s32)ce[2] }, h[3], n[3]; int sf;
-            if (track_ray(&trk, a, b, h, n, &sf) && ce[1] < h[1] + 30) ce[1] = h[1] + 30;
+            // port: up quickly, back down over a few frames - over the edge of a ledge or a wall's top the ray found
+            // it on one frame and missed it on the next, and the camera jumped ~90 units up and down every frame
+            static float glift;
+            if (!cam_ok) glift = 0;
+            float want = 0;
+            if (track_ray(&trk, a, b, h, n, &sf) && ce[1] < h[1] + 30) want = h[1] + 30 - ce[1];
+            if (want > 150) want = 0;                  // that far up it is an overhang or a ledge above, not the ground
+            glift += (want - glift) * (want > glift ? 0.5f : 0.12f);
+            ce[1] += glift;
         }
-        memcpy(cam_pos, ce, sizeof(ce));
+        memcpy(cam_pos, ce, sizeof(ce)); CAMDBG(1, ce);
         if (race == R_RACE || race == R_DONE) {   // keep the camera in sight of the rider once racing (the exe only checks
             // for a roof over the camera, and not at the gate, where this pulled the camera into the rider)
+            // port: in quickly, back out over a few frames (as the chase camera's own ray): a ray grazing an edge hit
+            // on one frame and missed on the next, and the camera jumped ~80 units in and out every frame (judder)
+            static float sight = 1;
+            if (!cam_ok) sight = 1;
             s32 e[3] = { (s32)rp[0], (s32)rp[1] + 50, (s32)rp[2] }, q[3] = { (s32)cam_pos[0], (s32)cam_pos[1], (s32)cam_pos[2] }, h[3], n[3]; int sf;
-            if (track_ray(&trk, e, q, h, n, &sf)) {
+            float want = 1;
+            float qx = cam_pos[0] - e[0], qy = cam_pos[1] - e[1], qz = cam_pos[2] - e[2], ql = sqrtf(qx * qx + qy * qy + qz * qz);
+            if (ql > 1 && track_ray(&trk, e, q, h, n, &sf)) {
                 float dx = h[0] - e[0], dy = h[1] - e[1], dz = h[2] - e[2], l = sqrtf(dx * dx + dy * dy + dz * dz);
-                float k = l > 30 ? (l - 25) / l : 0;
-                cam_pos[0] = e[0] + dx * k; cam_pos[1] = e[1] + dy * k; cam_pos[2] = e[2] + dz * k;
+                want = l > 30 ? (l - 25) / ql : 0;
+                if (want > 1) want = 1;
             }
+            sight += (want - sight) * (want < sight ? 0.6f : 0.12f);   // (in within ~3 frames rather than a 150-200 unit cut)
+            if (sight < 0.999f) { cam_pos[0] = e[0] + qx * sight; cam_pos[1] = e[1] + qy * sight; cam_pos[2] = e[2] + qz * sight; }
         }
 
+        CAMDBG(2, cam_pos);
         {   // 0x5acb4: the eye and the target both move param_4 (40; 32 on the superpipe) along the view's up vector
             float f[3] = { tg[0] - cam_pos[0], tg[1] - cam_pos[1], tg[2] - cam_pos[2] }, l = sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
             if (l > 1) {
@@ -1906,6 +1947,7 @@ int main(int argc, char **argv)
                 if (ul > 0.01f) for (int k = 0; k < 3; k++) { cam_pos[k] += u[k] / ul * lift; tg[k] += u[k] / ul * lift; }
             }
         }
+        CAMDBG(3, cam_pos);
 #ifndef TEST_NORAYS
         {   // port: keep the course off the near plane's corners (6.4 units ahead, ~8.2 to its corners).
             // A polygon the hardware cuts at the near plane gets a depth just under zero there, which the DS wraps to
@@ -1938,12 +1980,39 @@ int main(int argc, char **argv)
                     if (perp < 0) { perp = -perp; for (int k = 0; k < 3; k++) nn[k] = -nn[k]; }
                     if (perp < 25) for (int k = 0; k < 3; k++) pv[j][k] = nn[k] * (25 - perp);
                 }
-                for (int j = 0; j < 9; j++) for (int k = 0; k < 3; k++) cam_pos[k] += pv[j][k];
+                // the rays often see the same surface: each push counts only what the others have not already
+                // covered along its normal (summed, nine rays on one slope threw the camera 150 units for a frame)
+                float P[3] = { 0, 0, 0 };
+                for (int j = 0; j < 9; j++) {
+                    float a = sqrtf(pv[j][0] * pv[j][0] + pv[j][1] * pv[j][1] + pv[j][2] * pv[j][2]);
+                    if (a < 0.01f) continue;
+                    float nn[3] = { pv[j][0] / a, pv[j][1] / a, pv[j][2] / a };
+                    float more = a - (P[0] * nn[0] + P[1] * nn[1] + P[2] * nn[2]);
+                    if (more > 0) for (int k = 0; k < 3; k++) P[k] += nn[k] * more;
+                }
+                // out quickly, back in gently: a ray finding the wall a frame late or losing it shows as no jump
+                static float Pa[3];
+                if (!cam_ok) memset(Pa, 0, sizeof(Pa));
+                float pl = P[0] * P[0] + P[1] * P[1] + P[2] * P[2], al2 = Pa[0] * Pa[0] + Pa[1] * Pa[1] + Pa[2] * Pa[2];
+                for (int k = 0; k < 3; k++) Pa[k] = Pa[k] + (P[k] - Pa[k]) * (pl >= al2 ? 0.6f : 0.15f);
+                for (int k = 0; k < 3; k++) cam_pos[k] += Pa[k];
             }
         }
 #endif
         glLoadIdentity();
         gluLookAt(cam_pos[0] / 256, cam_pos[1] / 256, cam_pos[2] / 256, tg[0] / 256, tg[1] / 256, tg[2] / 256, 0, 1, 0);
+#ifdef TEST_CAMLOG
+        {   // test builds: the camera, its target and the drawn rider each frame (dsrun --ram, magic SSXCAM1)
+            typedef struct { s32 cam[3], tg[3], rp[3], py, vy; u8 rail, air, pipe, race; s32 st[4][3]; } CamE;
+            static struct { char magic[8]; u32 n; CamE e[7000]; } cl = { "SSXCAM1", 0, {{{0}}} };
+            if (race == R_RACE && !paused && cl.n < 7000) {
+                CamE *e = &cl.e[cl.n++];
+                for (int k = 0; k < 3; k++) { e->cam[k] = (s32)(cam_pos[k] * 16); e->tg[k] = (s32)(tg[k] * 16); e->rp[k] = (s32)(rp[k] * 16); }
+                e->py = ph.pos[1]; e->vy = ph.vel[1]; e->rail = ph.rail_state; e->air = ph.air; e->pipe = ph.pipe; e->race = race;
+                extern float camdbg[4][3]; for (int j = 0; j < 4; j++) for (int k = 0; k < 3; k++) e->st[j][k] = (s32)(camdbg[j][k] * 16);
+            }
+        }
+#endif
         {   float v[3] = { tg[0] - cam_pos[0], tg[1] - cam_pos[1], tg[2] - cam_pos[2] }, l = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
             if (l > 1) for (int k = 0; k < 3; k++) view_f[k] = v[k] / l; }
         glPolyFmt(POLY_ALPHA(31) | track_cull | POLY_FOG);
