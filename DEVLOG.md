@@ -1043,5 +1043,19 @@ what the riders look like.
   pass at most 8 s apart (was one in three, 12 s apart, the wait spent even when nothing played). A race in
   melonDS confirms the clip path plays in a race.
 
+## Stage 76: saves on hardware; Voice Clips on / off, music ducking, game-sound banks
+* Nothing was saved or loaded on a flashcart: nitroFSInit reads the ROM through FAT there, so it runs
+  fatInitDefault itself and then makes nitro:/ the current drive; the game's own fatInitDefault (load_best) then
+  returned at once and every relative save path pointed into the read-only NitroFS. load_best now changes to the
+  ROM's folder (fatGetDefaultCwd, argv[0]) or the card's root, so progress, options, the language, shadows and
+  voice clips persist. (melonDS loads the ROM as a cart, which is why it never showed there.)
+* Voice Clips list: "Voice Clips: On / Off" (off by default; while off the slots are greyed and skipped, and
+  nothing plays in races) and "Music Ducking: On / Off" (the 30 % dip under a clip); both saved with the options
+  (Options grew to 8 bytes; older saves get Off / On). The slot names no longer show the take's length.
+* Each slot has two banks, Sound 1 / Sound 2, adding a game sound to the clip (None, Applause, Ding, Trick Beep,
+  Boost, Pickup, Firework, Flare, Punch, Knockdown, Countdown, Go, Tweak, Swing, Wipeout): it plays with the clip
+  at the sound-effects volume, previews as it is picked, and a slot of game sounds alone (no take) also plays.
+  Saved in the slot's file (VoiceFx.bank, the spare bytes of SVC2).
+
 ## Not done yet / next
 * Download Play (see stage 41).

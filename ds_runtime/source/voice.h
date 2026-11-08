@@ -6,6 +6,9 @@
 enum { VC_UBER, VC_WIN, VC_PASS, VC_KNOCK, VC_N };
 enum { VC_RATE = 11025, VC_MAX = VC_RATE * 5 / 2 };       // 2.5 s a take
 extern const char *const VC_NAME[VC_N];
+enum { VC_NSND = 15 };
+extern const char *const VC_SND_NAME[VC_NSND];   //[...]a slot can add (VoiceFx.bank)
+void voice_bank_preview(int k);
 void voice_init(bool fat);                 // load the saved clips (after fatInitDefault)
 bool voice_has(int slot);
 int  voice_ms(int slot);                   // the take's length

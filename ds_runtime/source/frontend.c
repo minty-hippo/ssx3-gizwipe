@@ -138,7 +138,7 @@ static int screen = FE_TITLE, sel_peak, sel_event, sel_rider, sel_main, frames, 
 static bool dirty = true;
 static int play_mode;                                   // 0 [...], 1 Single Event, 2 Shadow Racing, 3 Multiplayer
 #define career_mode (play_mode == 0)
-Options g_opt = { 10, 10, 1, 0, 0xff, 1 };
+Options g_opt = { 10, 10, 1, 0, 0xff, 1, 0, 1 };
 static int prof_page, arr_l, arr_r;
 static int vc_sel, vc_row, vc_pend, vc_msg_t; static bool vc_edit, vc_confirm; static const char *vc_msg;   // Voice Clips
 static int sel_opt, msg_t, sel_sh; static bool confirm, watching;
@@ -944,15 +944,19 @@ bool fe_frame(u32 down, int *event, int *rider, int nriders, const char *const *
         return false;
     }
     case FE_VOICE: {                                   // port addition: Voice Clips (voice.c)
+        // the list: 0 Voice Clips on / off, 1 music ducking on / off, 2.. the four slots (greyed while off)
         static const char *const VH[VC_N] = { "Plays when you reach SUPER UBER (in place of the crowd).",
                                               "Plays when you win a race.",
                                               "Plays now and then as you pass another rider.",
                                               "Plays when you knock another rider down." };
-        // the edit rows: 0 Record, 1 Play, 2..11 sliders, 12 Clear
-        enum { VR_N = 13, VR_CLEAR = 12 };
-        static const char *const RN[VR_N] = { "Record", "Play", "Pitch", "Autotune", "Chorus", "Echo", "Echo Delay",
-                                              "Tone", "Bass", "Low-pass", "High-pass", "Volume", "Clear" };
-        VoiceFx *fx = voice_fx(vc_sel);
+        enum { VL_ON = 0, VL_DUCK = 1, VL_SLOT = 2, VL_N = 2 + VC_N };
+        // the edit rows: 0 Record, 1 Play, 2 / 3 the two game-sound banks, 4..13 sliders, 14 Clear
+        enum { VR_SND = 2, VR_SL = 4, VR_N = 15, VR_CLEAR = 14 };
+        static const char *const RN[VR_N] = { "Record", "Play", "Sound 1", "Sound 2", "Pitch", "Autotune", "Chorus", "Echo",
+                                              "Echo Delay", "Tone", "Bass", "Low-pass", "High-pass", "Volume", "Clear" };
+        if (vc_sel < 0 || vc_sel >= VL_N) vc_sel = 0;
+        int slot = vc_sel >= VL_SLOT ? vc_sel - VL_SLOT : 0;
+        VoiceFx *fx = voice_fx(slot);
         s8 *val[10] = { &fx->pitch, (s8 *)&fx->tune, (s8 *)&fx->chorus, (s8 *)&fx->echo, (s8 *)&fx->echo_ms,
                         &fx->tone, &fx->bass, (s8 *)&fx->lp, (s8 *)&fx->hp, (s8 *)&fx->vol };
         static const s8 lo[10] = { -12, 0, 0, 0, 1, -5, -5, 0, 0, 0 }, hi[10] = { 12, 10, 10, 10, 10, 5, 5, 10, 10, 10 };
@@ -960,74 +964,99 @@ bool fe_frame(u32 down, int *event, int *rider, int nriders, const char *const *
             if ((down & (KEY_A | KEY_B)) || voice_rec_ms() >= VC_MAX * 1000 / VC_RATE - 20) {
                 bool ok = voice_record_end();
                 vc_msg = ok ? "Recorded." : "Nothing heard - try again closer to the microphone."; vc_msg_t = 150;
-#ifdef TEST_VOICE
-                { extern int voice_dbg[2]; static char db[48]; snprintf(db, sizeof(db), "%s %d %d", ok ? "ok" : "no", voice_dbg[0], voice_dbg[1]); vc_msg = db; }
-#endif
-                if (ok) voice_play(vc_sel);
+                if (ok) voice_play(slot);
                 dirty = true;
             }
             down = 0;
         }
         if (!vc_edit) {
-            if (down & KEY_UP) { vc_sel = (vc_sel + VC_N - 1) % VC_N; dirty = true; }
-            if (down & KEY_DOWN) { vc_sel = (vc_sel + 1) % VC_N; dirty = true; }
-            if (down & KEY_X) voice_play(vc_sel);
-            if (down & KEY_A) { vc_edit = true; vc_row = voice_has(vc_sel) ? 1 : 0; vc_confirm = false; dirty = true; }
+            int step = 0;
+            if (down & KEY_UP) step = -1;
+            if (down & KEY_DOWN) step = 1;
+            if (step) {                                // (the slots are skipped while Voice Clips is off)
+                int n = g_opt.voice ? VL_N : VL_SLOT;
+                vc_sel = (vc_sel + n + step) % n; dirty = true;
+            }
+            if (vc_sel <= VL_DUCK && (down & (KEY_A | KEY_LEFT | KEY_RIGHT))) {
+                u8 *t = vc_sel == VL_ON ? &g_opt.voice : &g_opt.vduck;
+                *t = !*t; fe_save(); dirty = true;
+                if (!g_opt.voice && vc_sel >= VL_SLOT) vc_sel = VL_ON;
+            } else if (vc_sel >= VL_SLOT && g_opt.voice) {
+                if (down & KEY_X) voice_play(slot);
+                if (down & KEY_A) { vc_edit = true; vc_row = voice_has(slot) ? 1 : 0; vc_confirm = false; dirty = true; }
+            }
             if (down & KEY_B) { voice_stop(); fe_enter(FE_MAIN); return false; }
         } else {
             if (down & KEY_UP) { vc_row = (vc_row + VR_N - 1) % VR_N; vc_confirm = false; dirty = true; }
             if (down & KEY_DOWN) { vc_row = (vc_row + 1) % VR_N; vc_confirm = false; dirty = true; }
-            if (vc_row >= 2 && vc_row < VR_CLEAR && (down & (KEY_LEFT | KEY_RIGHT))) {
-                int k = vc_row - 2, v = *val[k] + ((down & KEY_RIGHT) ? 1 : -1);
+            int dir = (down & KEY_RIGHT) ? 1 : (down & KEY_LEFT) ? -1 : 0;
+            if (dir && vc_row >= VR_SL && vc_row < VR_CLEAR) {
+                int k = vc_row - VR_SL, v = *val[k] + dir;
                 if (v >= lo[k] && v <= hi[k]) { *val[k] = (s8)v; vc_pend = 40; dirty = true; }
             }
-            if (vc_pend > 0 && --vc_pend == 0) { voice_apply(vc_sel); voice_save(vc_sel); }   // the effects re-rendered once the sliders rest
+            if (dir && (vc_row == VR_SND || vc_row == VR_SND + 1)) {   // a game sound to play with the clip
+                u8 *b = &fx->bank[vc_row - VR_SND];
+                *b = (u8)((*b + VC_NSND + dir) % VC_NSND); voice_save(slot); dirty = true;
+                voice_bank_preview(*b);
+            }
+            if (vc_pend > 0 && --vc_pend == 0) { voice_apply(slot); voice_save(slot); }   // the effects re-rendered once the sliders rest
+            bool play = (down & KEY_X) != 0;
             if (down & KEY_A) {
                 if (vc_row == 0) {
-                    if (voice_record(vc_sel)) { vc_msg = NULL; dirty = true; }
+                    if (voice_record(slot)) { vc_msg = NULL; dirty = true; }
                     else { vc_msg = "The microphone could not be started."; vc_msg_t = 150; dirty = true; }
                 } else if (vc_row == VR_CLEAR) {
-                    if (vc_confirm) { voice_clear(vc_sel); vc_confirm = false; vc_row = 0; vc_msg = "Cleared."; vc_msg_t = 120; }
+                    if (vc_confirm) { voice_clear(slot); vc_confirm = false; vc_row = 0; vc_msg = "Cleared."; vc_msg_t = 120; }
                     else vc_confirm = true;
                     dirty = true;
-                } else { if (vc_pend) { vc_pend = 0; voice_apply(vc_sel); voice_save(vc_sel); } voice_play(vc_sel);
-                }
+                } else play = true;
             }
-            if (down & KEY_X) { if (vc_pend) { vc_pend = 0; voice_apply(vc_sel); voice_save(vc_sel); } voice_play(vc_sel);
-            }
-            if (down & KEY_B) { if (vc_pend) { vc_pend = 0; voice_apply(vc_sel); } voice_save(vc_sel); vc_edit = false; dirty = true; }
+            if (play) { if (vc_pend) { vc_pend = 0; voice_apply(slot); voice_save(slot); } voice_play(slot); }
+            if (down & KEY_B) { if (vc_pend) { vc_pend = 0; voice_apply(slot); } voice_save(slot); vc_edit = false; dirty = true; }
         }
         if (vc_msg_t > 0 && --vc_msg_t == 0) { vc_msg = NULL; dirty = true; }
         if (dirty) {
-            subui_begin("Voice Clips", VC_NAME[vc_sel]);
-            if (!vc_edit) {
-                subui_text(20, 34, 1, 0, VC_NAME[vc_sel], SU_ORANGE);
-                int y = 56 + subui_wrap(20, 56, 216, 2, VH[vc_sel], SU_WHITE, 13);
-                char b[40];
-                if (voice_has(vc_sel)) snprintf(b, sizeof(b), "%d.%d s recorded", voice_ms(vc_sel) / 1000, voice_ms(vc_sel) / 100 % 10);
-                else snprintf(b, sizeof(b), "Nothing recorded yet");
-                subui_text(20, y + 6, 2, 0, b, voice_has(vc_sel) ? SU_GREEN : SU_GREY);
+            subui_begin("Voice Clips", vc_sel >= VL_SLOT ? VC_NAME[slot] : NULL);
+            if (!vc_edit && vc_sel < VL_SLOT) {
+                static const char *const TH[2] = {
+                    "Turn on to play your own clips in races. While off, the clips stay saved but never play.",
+                    "Lower the music while a clip plays in a race, so the clip can be heard." };
+                subui_text(20, 34, 1, 0, vc_sel == VL_ON ? "Voice Clips" : "Music Ducking", SU_ORANGE);
+                subui_wrap(20, 56, 216, 2, TH[vc_sel], SU_WHITE, 13);
                 if (!voice_fat()) subui_wrap(20, 128, 216, 3, "No memory card: the clips last until the DS is switched off.", SU_GREY, 10);
-                sub_hints("Edit", "Back", voice_has(vc_sel) ? "X Play" : NULL);
+                sub_hints("Change", "Back", NULL);
+            } else if (!vc_edit) {
+                subui_text(20, 34, 1, 0, VC_NAME[slot], SU_ORANGE);
+                int y = 56 + subui_wrap(20, 56, 216, 2, VH[slot], SU_WHITE, 13);
+                char b[48];
+                if (voice_ms(slot)) snprintf(b, sizeof(b), "%d.%d s recorded", voice_ms(slot) / 1000, voice_ms(slot) / 100 % 10);
+                else snprintf(b, sizeof(b), "Nothing recorded yet");
+                subui_text(20, y + 6, 2, 0, b, voice_ms(slot) ? SU_GREEN : SU_GREY);
+                if (fx->bank[0] || fx->bank[1]) {
+                    snprintf(b, sizeof(b), "+ %s%s%s", VC_SND_NAME[fx->bank[0] ? fx->bank[0] : fx->bank[1]],
+                             fx->bank[0] && fx->bank[1] ? ", " : "", fx->bank[0] && fx->bank[1] ? VC_SND_NAME[fx->bank[1]] : "");
+                    subui_text(20, y + 20, 2, 0, b, SU_BLUE);
+                }
+                sub_hints("Edit", "Back", voice_has(slot) ? "X Play" : NULL);
             } else {
-                for (int i = 0; i < VR_N; i++) {               // (small type: thirteen rows)
-                    int y = 28 + i * 10; bool on = i == vc_row;
+                for (int i = 0; i < VR_N; i++) {               // (small type: fifteen rows)
+                    int y = 27 + i * 9; bool on = i == vc_row;
                     subui_text(20, y, 3, 0, i == VR_CLEAR && vc_confirm ? "Clear - A again" : RN[i], on ? SU_ORANGE : SU_WHITE);
-                    char b[16] = "";
-                    int k = i - 2, v = k >= 0 && k < 10 ? *val[k] : 0;
-                    if (i == 0) snprintf(b, sizeof(b), "%s", voice_has(vc_sel) ? "again" : "new");
-                    else if (i == 1) snprintf(b, sizeof(b), voice_has(vc_sel) ? "%d.%d s" : "-", voice_ms(vc_sel) / 1000, voice_ms(vc_sel) / 100 % 10);
-                    else if (i == 2 || i == 7 || i == 8) snprintf(b, sizeof(b), v ? "%+d" : "0", v);
-                    else if (i == 6) snprintf(b, sizeof(b), "%d ms", 40 + v * 45);
-                    else if (i == 9) { if (v) snprintf(b, sizeof(b), "%d Hz", (int)(4000.0f * powf(0.75f, v - 1))); else snprintf(b, sizeof(b), "Off"); }
-                    else if (i == 10) { if (v) snprintf(b, sizeof(b), "%d Hz", (int)(80.0f * powf(1.43f, v - 1))); else snprintf(b, sizeof(b), "Off"); }
-                    else if (i < VR_CLEAR) snprintf(b, sizeof(b), "%d", v);
+                    char b[20] = "";
+                    int k = i - VR_SL, v = k >= 0 && k < 10 ? *val[k] : 0;
+                    if (i == 0) snprintf(b, sizeof(b), "%s", voice_ms(slot) ? "again" : "new");
+                    else if (i == 1) { if (voice_ms(slot)) snprintf(b, sizeof(b), "%d.%d s", voice_ms(slot) / 1000, voice_ms(slot) / 100 % 10); else snprintf(b, sizeof(b), "-"); }
+                    else if (i == VR_SND || i == VR_SND + 1) snprintf(b, sizeof(b), "%s", VC_SND_NAME[fx->bank[i - VR_SND]]);
+                    else if (k == 0 || k == 5 || k == 6) snprintf(b, sizeof(b), v ? "%+d" : "0", v);
+                    else if (k == 4) snprintf(b, sizeof(b), "%d ms", 40 + v * 45);
+                    else if (k == 7) { if (v) snprintf(b, sizeof(b), "%d Hz", (int)(4000.0f * powf(0.75f, v - 1))); else snprintf(b, sizeof(b), "Off"); }
+                    else if (k == 8) { if (v) snprintf(b, sizeof(b), "%d Hz", (int)(80.0f * powf(1.43f, v - 1))); else snprintf(b, sizeof(b), "Off"); }
+                    else if (k >= 0 && k < 10) snprintf(b, sizeof(b), "%d", v);
                     subui_text(236, y, 3, 1, b, on ? SU_ORANGE : SU_BLUE);
                     if (k >= 0 && k < 10) subui_bar(124, y + 2, 64, 5, v - lo[k], hi[k] - lo[k]);
                 }
-                if (vc_msg) subui_text(128, 158, 3, 2, vc_msg, SU_GREEN);
-                else if (voice_recording()) subui_text(128, 158, 3, 2, "Recording - speak into the microphone", SU_RED);
-                sub_hints(vc_row == 0 ? "Record" : vc_row == VR_CLEAR ? "Clear" : "Play", "Back", vc_row >= 2 && vc_row < VR_CLEAR ? "< >" : "X Play");
+                sub_hints(vc_row == 0 ? "Record" : vc_row == VR_CLEAR ? "Clear" : "Play", "Back",
+                          vc_row >= VR_SND && vc_row < VR_CLEAR ? "< >" : "X Play");
             }
             subui_show();
             dirty = false;
@@ -1035,18 +1064,21 @@ bool fe_frame(u32 down, int *event, int *rider, int nriders, const char *const *
         lines_to(SX(0x84) - 3, SX(0x55) - 4);
         hud_begin();
         frame("Voice Clips", true);
-        char ib[VC_N][40]; const char *it[VC_N];
-        for (int i = 0; i < VC_N; i++) {
-            if (voice_has(i)) snprintf(ib[i], sizeof(ib[i]), "%s: %d.%d s", L(VC_NAME[i]), voice_ms(i) / 1000, voice_ms(i) / 100 % 10);
-            else snprintf(ib[i], sizeof(ib[i]), "%s: -", L(VC_NAME[i]));
-            it[i] = ib[i];
-        }
-        list(SX(0x84), SX(0x55), SX(0x96), 12, it, VC_N, vc_sel, true, NULL);
+        char ib[VL_N][40]; const char *it[VL_N]; bool dim[VL_N];
+        snprintf(ib[0], sizeof(ib[0]), "%s: %s", L("Voice Clips"), g_opt.voice ? L("On") : L("Off"));
+        snprintf(ib[1], sizeof(ib[1]), "%s: %s", L("Music Ducking"), g_opt.vduck ? L("On") : L("Off"));
+        dim[0] = dim[1] = false;
+        for (int i = 0; i < VC_N; i++) { snprintf(ib[VL_SLOT + i], sizeof(ib[0]), "%s", L(VC_NAME[i])); dim[VL_SLOT + i] = !g_opt.voice; }
+        for (int i = 0; i < VL_N; i++) it[i] = ib[i];
+        list(SX(0x84), SX(0x55) - 6, SX(0x96), 12, it, VL_N, vc_sel, true, dim);
+        int my = SX(0x55) - 6 + VL_N * 12 + 6;
         if (voice_recording()) {                       // the take's time and the microphone's level
-            int t = voice_rec_ms(), full = VC_MAX * 1000 / VC_RATE, x = SX(0x84), w = SX(0x96), y = SX(0x55) + VC_N * 12 + 10;
-            hud_font(2); hud_text(x + w / 2, y, 2, "REC", (frames / 15) & 1 ? RGB15(31, 6, 4) : RGB15(20, 4, 3)); hud_font(0);
-            hud_rect(x, y + 14, w, 5, RGB15(6, 8, 12), 1); hud_rect(x, y + 14, w * t / full, 5, RGB15(31, 6, 4), 2);
-            hud_rect(x, y + 22, w, 5, RGB15(6, 8, 12), 1); hud_rect(x, y + 22, w * voice_rec_level() / 100, 5, RGB15(10, 28, 10), 2);
+            int t = voice_rec_ms(), full = VC_MAX * 1000 / VC_RATE, x = SX(0x84), w = SX(0x96);
+            hud_font(2); hud_text(x + w / 2, my, 2, "REC", (frames / 15) & 1 ? RGB15(31, 6, 4) : RGB15(20, 4, 3)); hud_font(0);
+            hud_rect(x, my + 14, w, 5, RGB15(6, 8, 12), 1); hud_rect(x, my + 14, w * t / full, 5, RGB15(31, 6, 4), 2);
+            hud_rect(x, my + 22, w, 5, RGB15(6, 8, 12), 1); hud_rect(x, my + 22, w * voice_rec_level() / 100, 5, RGB15(10, 28, 10), 2);
+        } else if (vc_msg) {                           // (the bottom list is full: messages up here)
+            hud_font(3); hud_text(SX(0x84) + SX(0x96) / 2, my, 2, vc_msg, C_WHITE); hud_font(0);
         }
         hud_end();
         return false;

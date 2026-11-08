@@ -29,7 +29,8 @@ void fe_show_rider(int ri);                // load that rider's meshes
 void fe_draw_rider(int yaw, int cx, int cy, int h, int anim, bool restart);   // draw it (3D, before the HUD pass): centred on (cx, cy), h px tall, animation id
 int  fe_char_of(int rider);                // exe character index of RIDERS[rider]
 void fe_save(void);                        // write the save (career, attributes)
-typedef struct { u8 master, fx, cam, fps30, lang, rumble; } Options;   // (rumble: port addition, Rumble Pak on / off)   // Options screen: volumes 0..10, camera 0 Near / 1 Mid / 2 Far, 30 fps cap, language (0xff = not chosen yet)
+typedef struct { u8 master, fx, cam, fps30, lang, rumble, voice, vduck; } Options;   // (voice, vduck: Voice Clips on, music ducking under them)
+   // (rumble: port addition, Rumble Pak on / off)   // Options screen: volumes 0..10, camera 0 Near / 1 Mid / 2 Far, 30 fps cap, language (0xff = not chosen yet)
 extern Options g_opt;
 bool fe_shadow(void);
 int  fe_image(const char *name, int *w, int *h);   // a menu/ image as a texture (cached until the next screen)

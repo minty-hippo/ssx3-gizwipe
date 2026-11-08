@@ -27,6 +27,7 @@
 #include "sky.h"
 #include <fat.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include "fireworks.h"
 #include "voice.h"
 #include "career.h"
@@ -1154,6 +1155,15 @@ static void load_best(int *best)
 {
     have_fat = fatInitDefault();
     if (!have_fat) return;
+    // the saves sit beside the ROM. nitroFSInit (earlier) may already have run fatInitDefault - on a flashcart it reads
+    // the ROM through FAT - and then made nitro:/ the current drive, so this call returned at once and every relative
+    // path pointed into the read-only NitroFS: nothing (progress, options, language, shadows, voice clips) was ever
+    // saved or loaded on hardware. Go to the ROM's folder (argv[0]) or the card's root.
+    {
+        char *cwd = fatGetDefaultCwd();
+        if (!cwd || chdir(cwd) != 0) { const char *dr = fatGetDefaultDrive(); if (!dr || chdir(dr) != 0) chdir("fat:/"); }
+        free(cwd);
+    }
     FILE *f = fopen(SAVE_NAME, "rb");
     if (!f) return;
     u32 magic = 0;
@@ -1164,6 +1174,7 @@ static void load_best(int *best)
     if (magic == 0x34585353 && (on = fread(&g_opt, 1, sizeof(g_opt), f)) >= 3) {      // (stage 26-31 saves: 3 bytes, no fps30)
         if (on < 5 || g_opt.lang > 4) g_opt.lang = 0xff;                            // (before stage 42: no language yet)
         if (on < 6 || g_opt.rumble > 1) g_opt.rumble = 1;                           // (before stage 64: no rumble option)
+        if (on < 8 || g_opt.voice > 1 || g_opt.vduck > 1) { g_opt.voice = 0; g_opt.vduck = 1; }   // (before stage 76: Voice Clips off)
         if (g_opt.master > 10) g_opt.master = 10; if (g_opt.fx > 10) g_opt.fx = 10; if (g_opt.cam > 2) g_opt.cam = 1; if (g_opt.fps30 > 1) g_opt.fps30 = 0;
     }
     fclose(f);
@@ -1687,7 +1698,7 @@ int main(int argc, char **argv)
                         int f = ghost_punch_remote(g, &ph);
                         if (f) { sfx_play(SND_PUNCH); fights[f]++; }
                         if (f == 2) {                              // they go down on their console
-                            net_ctl.knock_to = g->pid; net_ctl.knock_seq++; sfx_play(SND_KNOCKDOWN); voice_play(VC_KNOCK);
+                            net_ctl.knock_to = g->pid; net_ctl.knock_seq++; sfx_play(SND_KNOCKDOWN); if (g_opt.voice) voice_play(VC_KNOCK);
                             trick_msg_pts = 0; trick_msg_id = -1; snprintf(trick_msg_text, sizeof(trick_msg_text), "%s", LX("Knockdown!", "KNOCKDOWN")); trick_msg_t = 90;
                         }
                         const NetCtl *c = &net_s.ctl[g->pid];
@@ -1704,7 +1715,7 @@ int main(int argc, char **argv)
                         if (f == 1 || f == 2) sfx_play(SND_KNOCKDOWN);    // (a knocked-down player also gets Wipeout1)
                         if (f == 2 || f == 3) sfx_play(SND_PUNCH);
                         if (f == 2) rumble_sfx(SND_KNOCKDOWN); else if (f == 1 || f == 3) rumble_sfx(SND_PUNCH);
-                        if (f == 2) voice_play(VC_KNOCK);                  // (Voice Clips)
+                        if (f == 2 && g_opt.voice) voice_play(VC_KNOCK);   // (Voice Clips)
                         if (f == 2) { trick_msg_pts = 0; trick_msg_id = -1; snprintf(trick_msg_text, sizeof(trick_msg_text), "%s", LX("Knockdown!", "KNOCKDOWN")); trick_msg_t = 90; }
                     }
                 php[4] -= pp4; php[4] += NOW_LINE();
@@ -1723,7 +1734,7 @@ int main(int argc, char **argv)
                         // not in the first 5 s (the start's shuffle)
                         static int pass_at = -1000;
                         if (race_steps == 1) pass_at = -1000;
-                        if (!replay && place < was_place && race_steps > 125 && race_steps - pass_at > 200 && voice_has(VC_PASS)
+                        if (!replay && place < was_place && race_steps > 125 && race_steps - pass_at > 200 && g_opt.voice && voice_has(VC_PASS)
                             && rand() % 2 == 0) {                  // (every other pass at most, 8 s apart)
                             pass_at = race_steps; voice_play(VC_PASS);
                         }
@@ -1770,7 +1781,7 @@ int main(int argc, char **argv)
                         if (race_kind == 1 && nghost) {            // 0x4883c / 0x48890: by the finishing place
                             fin_place = 1;
                             for (int k = 0; k < nghost; k++) if (ghosts[k].finished) fin_place++;
-                            if (fin_place == 1 && !fe_shadow()) voice_play(VC_WIN);   // (Voice Clips)
+                            if (fin_place == 1 && !fe_shadow() && g_opt.voice) voice_play(VC_WIN);   // (Voice Clips)
                             ph.react = fin_place == 1 ? 23 + rand() % 5 : fin_place <= 3 && nghost == 3 ? 20 + rand() % 3 : 28 + rand() % 8;
                         }
                         if (race_kind == 1 && nghost) {            // results table: the riders by time (0x72200)
@@ -1807,7 +1818,7 @@ int main(int argc, char **argv)
                 }
                 for (int k = 0; k < ph.sfx_n; k++) {
                     // port: the player's own SUPER UBER clip in place of the crowd (Voice Clips)
-                    if (ph.sfx_q[k] == SND_CROWD && voice_has(VC_UBER) && !replay) { voice_play(VC_UBER); rumble_sfx(ph.sfx_q[k]); continue; }
+                    if (ph.sfx_q[k] == SND_CROWD && g_opt.voice && voice_has(VC_UBER) && !replay) { voice_play(VC_UBER); rumble_sfx(ph.sfx_q[k]); continue; }
                     sfx_play(ph.sfx_q[k]); rumble_sfx(ph.sfx_q[k]);
                 }
                 if (ph.rail_state == 2) rumble_hold(1);           // a light buzz along a rail
@@ -1852,7 +1863,7 @@ int main(int argc, char **argv)
         int l_phys = NOW_LINE();
         track_update_stream(&trk, replay ? rpg.s : ph.s, 2);
         music_update(vblanks, false);
-        music_duck(voice_tick() ? 30 : 100); music_duck_step();     // (Voice Clips: the music dips under a clip)
+        music_duck(voice_tick() && g_opt.vduck ? 30 : 100); music_duck_step();     // (Voice Clips: the music dips under a clip)
         int l_stream = NOW_LINE();
 
         // chase camera (cam_step, 0x75808): interpolate the last two steps, then keep it out of the ground / walls
