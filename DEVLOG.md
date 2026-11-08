@@ -1057,5 +1057,19 @@ what the riders look like.
   at the sound-effects volume, previews as it is picked, and a slot of game sounds alone (no take) also plays.
   Saved in the slot's file (VoiceFx.bank, the spare bytes of SVC2).
 
+## Stage 77: the last R&B wedges; Voice Clips' descriptions
+* The white wedges about 70 % into R&B were the course itself, cut by the near plane where the line runs
+  between rock walls and through a gully (the same wrapped depth as stage 72's fog patches; a run with melonDS
+  built to wrap the depth found them at 67 % and 65 % with autopilot on). Three changes, after which that run
+  finds no course, tree or fog polygon crossing the near plane over the whole race:
+  * the near plane at 6.4 game units (was 12.8): the camera's rays keep it ~25 off the course, and the 24-bit
+    depth is still finer than a quarter unit out to the end of the fog;
+  * the camera moves off any surface within 25 units, found with nine short rays (down, sides, ahead, ahead-down),
+    three a frame in turn (~4 lines a frame);
+  * a tree whose crown the camera is inside is left out until the camera is clear.
+  (Only the board trail, drawn without fog, still crosses it now and then - it just goes faint.)
+* Voice Clips: the bottom screen showed the previous slot's name and description - it was drawn with the
+  selection from before the button press. Fixed.
+
 ## Not done yet / next
 * Download Play (see stage 41).

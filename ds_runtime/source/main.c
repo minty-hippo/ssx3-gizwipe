@@ -466,6 +466,13 @@ ITCM_CODE static int draw_props(const Track *t, const float cam[3], float fx, fl
         const TreePos *tp = &t->trees[idx[k]];
         u32 h = hash32(idx[k] * 2654435761u + tp->x);
         s32 sxz = (0x4000 - (h & 0x3ff)) >> 2, sy = (0x2000 + ((h >> 10) & 0xfff)) >> 2;   // 4096 = 1
+        {   // port: the camera inside the tree's crown - its branches would cross the near plane, which the hardware
+            // draws as fully fogged white wedges (see quad_front): the tree is left out until the camera is clear
+            s32 rr = (tex_imp ? (imp_ext[1] > -imp_ext[0] ? imp_ext[1] : -imp_ext[0]) : 200) * sxz >> 12;
+            s32 y0 = tex_imp ? imp_ext[2] * sy >> 12 : 0, y1 = tex_imp ? imp_ext[3] * sy >> 12 : 960 * sy >> 12;
+            s32 dx = tp->x - cx, dz = tp->z - cz, dy = cy - tp->y;
+            if ((s64)dx * dx + (s64)dz * dz < (s64)(rr + 24) * (rr + 24) && dy > y0 - 24 && dy < y1 + 24) continue;
+        }
         int a = ((h >> 22) & 0x7ff) * 16;
         s32 cs = cosLerp(a) * sxz >> 12, sn = sinLerp(a) * sxz >> 12;
         MatX W = { { { cs, 0, sn, tp->x * 16 }, { 0, sy, 0, tp->y * 16 }, { -sn, 0, cs, tp->z * 16 } } };
@@ -491,7 +498,7 @@ static void on_vblank(void) { vblanks++; submap_vblank(); rumble_frame(1, rumble
 // a scanline clock across frames (263 lines a frame; the vblank interrupt counts at line 192)
 static int NOW_LINE(void) { int ime = REG_IME; REG_IME = 0; int v = REG_VCOUNT; u32 n = vblanks; REG_IME = ime; return (int)n * 263 + (v >= 192 ? v - 192 : v + 71); }
 
-#define NEAR_DS 0.05f
+#define NEAR_DS 0.025f
 static void setup_fog(void)
 {
     glFogShift(3);
@@ -1899,6 +1906,42 @@ int main(int argc, char **argv)
                 if (ul > 0.01f) for (int k = 0; k < 3; k++) { cam_pos[k] += u[k] / ul * lift; tg[k] += u[k] / ul * lift; }
             }
         }
+#ifndef TEST_NORAYS
+        {   // port: keep the course off the near plane's corners (6.4 units ahead, ~8.2 to its corners).
+            // A polygon the hardware cuts at the near plane gets a depth just under zero there, which the DS wraps to
+            // the far end: it came out fully fogged - white wedges on hardware (melonDS clamps instead). Rock walls and
+            // gullies beside the line (R&B at ~70 %) came that close: the camera moves off any surface within 25 units,
+            // found with short rays down, to the sides, ahead and ahead-down.
+            float f[3] = { tg[0] - cam_pos[0], tg[1] - cam_pos[1], tg[2] - cam_pos[2] }, l = sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+            if (l > 1) {
+                for (int k = 0; k < 3; k++) f[k] /= l;
+                float r[3] = { -f[2], 0, f[0] }, rl = sqrtf(r[0] * r[0] + r[2] * r[2]);
+                if (rl > 0.01f) { r[0] /= rl; r[2] /= rl; } else { r[0] = 1; r[2] = 0; }
+                float u[3] = { r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0] };
+                static const s8 DIR[9][3] = { { 0, 0, -1 }, { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, 1, -1 }, { 1, 1, 0 }, { -1, 1, 0 },
+                                              { 1, 0, -1 }, { -1, 0, -1 } };
+                // (three rays a frame in turn, ~3 lines; each ray's last push is kept and all nine are applied)
+                static float pv[9][3]; static u8 grp;
+                grp = (grp + 1) % 3;
+                if (!cam_ok) memset(pv, 0, sizeof(pv));
+                for (int j = grp; j < 9; j += 3) {
+                    pv[j][0] = pv[j][1] = pv[j][2] = 0;
+                    float d[3]; for (int k = 0; k < 3; k++) d[k] = r[k] * DIR[j][0] + f[k] * DIR[j][1] + u[k] * DIR[j][2];
+                    float dl = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+                    s32 a[3] = { (s32)cam_pos[0], (s32)cam_pos[1], (s32)cam_pos[2] }, b[3], h[3], n[3]; int sf;
+                    for (int k = 0; k < 3; k++) b[k] = a[k] + (s32)(d[k] / dl * 30);
+                    if (!track_ray(&trk, a, b, h, n, &sf)) continue;
+                    float nl = sqrtf((float)n[0] * n[0] + (float)n[1] * n[1] + (float)n[2] * n[2]);
+                    if (nl < 1) continue;
+                    float nn[3] = { n[0] / nl, n[1] / nl, n[2] / nl };
+                    float perp = (cam_pos[0] - h[0]) * nn[0] + (cam_pos[1] - h[1]) * nn[1] + (cam_pos[2] - h[2]) * nn[2];
+                    if (perp < 0) { perp = -perp; for (int k = 0; k < 3; k++) nn[k] = -nn[k]; }
+                    if (perp < 25) for (int k = 0; k < 3; k++) pv[j][k] = nn[k] * (25 - perp);
+                }
+                for (int j = 0; j < 9; j++) for (int k = 0; k < 3; k++) cam_pos[k] += pv[j][k];
+            }
+        }
+#endif
         glLoadIdentity();
         gluLookAt(cam_pos[0] / 256, cam_pos[1] / 256, cam_pos[2] / 256, tg[0] / 256, tg[1] / 256, tg[2] / 256, 0, 1, 0);
         {   float v[3] = { tg[0] - cam_pos[0], tg[1] - cam_pos[1], tg[2] - cam_pos[2] }, l = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);

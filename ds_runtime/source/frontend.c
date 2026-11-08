@@ -1016,6 +1016,7 @@ bool fe_frame(u32 down, int *event, int *rider, int nriders, const char *const *
         }
         if (vc_msg_t > 0 && --vc_msg_t == 0) { vc_msg = NULL; dirty = true; }
         if (dirty) {
+            slot = vc_sel >= VL_SLOT ? vc_sel - VL_SLOT : 0; fx = voice_fx(slot);   // (the selection may have just moved)
             subui_begin("Voice Clips", vc_sel >= VL_SLOT ? VC_NAME[slot] : NULL);
             if (!vc_edit && vc_sel < VL_SLOT) {
                 static const char *const TH[2] = {
