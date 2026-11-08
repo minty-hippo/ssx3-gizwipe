@@ -54,8 +54,10 @@ int main(void)
     wav("vfx_dry.wav", raw, m, fs);
     struct { const char *nm; VoiceFx fx; } T[] = {
         { "plain", { 0, 0, 0, 0, 5, 10 } }, { "up5", { 5, 0, 0, 0, 5, 10 } }, { "tune", { 0, 10, 0, 0, 5, 10 } },
-        { "chorus", { 0, 0, 10, 0, 5, 10 } }, { "echo", { 0, 0, 0, 8, 5, 10 } }, { "all", { -4, 7, 6, 5, 3, 10 } } };
-    for (int t = 0; t < 6; t++) {
+        { "chorus", { 0, 0, 10, 0, 5, 10 } }, { "echo", { 0, 0, 0, 8, 5, 10 } }, { "all", { -4, 7, 6, 5, 3, 10 } },
+        { "tune10", { 0, 10, 0, 0, 5, 10 } }, { "tune3", { 0, 3, 0, 0, 5, 10 } }, { "bright", { 0, 0, 0, 0, 5, 10, 5, 0 } },
+        { "bass", { 0, 0, 0, 0, 5, 10, 0, 5 } }, { "lp6", { 0, 0, 0, 0, 5, 10, 0, 0, 6, 0 } }, { "hp6", { 0, 0, 0, 0, 5, 10, 0, 0, 0, 6 } } };
+    for (int t = 0; t < 12; t++) {
         int k = vfx_render(raw, m, fs, &T[t].fx, out, n * 2);
         char nm[40]; snprintf(nm, 40, "vfx_%s.wav", T[t].nm); wav(nm, out, k, fs);
         printf("%-6s len %5d  pitch:", T[t].nm, k);

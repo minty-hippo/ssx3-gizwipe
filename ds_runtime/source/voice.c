@@ -1,7 +1,8 @@
 // SSX 3 GizWipe - voice clips (port addition). The microphone records 16-bit at 11025 Hz into a double buffer on
 // the ARM7; each finished half is copied into the take here (from the FIFO interrupt). A take is trimmed and
 // levelled to 8-bit (vfx_clean), kept as the slot's raw clip, and rendered through its effects (vfx_render) into
-// the clip that plays. Saved as ssx3gizwipe_voice<n>.vc: "SVC1", u16 rate, u16 length, VoiceFx, raw samples.
+// the clip that plays. Saved as ssx3gizwipe_voice<n>.vc: "SVC2", u16 rate, u16 length, VoiceFx (12 bytes), raw samples (SVC1: an 8-byte VoiceFx, without tone, bass and
+// the filters).
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,7 +13,8 @@ const char *const VC_NAME[VC_N] = { "SuperUber", "Race Win", "Passing", "Knockdo
 static struct { s8 *raw; int n; s8 *out; int nout; VoiceFx fx; } C[VC_N];
 static bool fat;
 static int play_ch = -1;
-static const VoiceFx FX0 = { 0, 0, 0, 0, 5, 10, { 0, 0 } };
+static const VoiceFx FX0 = { 0, 0, 0, 0, 5, 10, 0, 0, 0, 0, { 0, 0 } };
+static int play_left;                                       // frames the clip still plays (voice_tick)
 
 int voice_dbg[2];
 bool voice_fat(void) { return fat; }
@@ -47,7 +49,9 @@ void voice_play(int s)
     int vol = 127 * C[s].fx.vol / 10 * g_opt.master / 10;
     if (vol <= 0) return;
     play_ch = soundPlaySample(C[s].out, SoundFormat_8Bit, C[s].nout & ~3, VC_RATE, vol, 64, false, 0);
+    play_left = C[s].nout * 60 / VC_RATE + 6;
 }
+bool voice_tick(void) { if (play_left > 0) play_left--; return play_left > 0; }
 
 static void path(char *b, int n, int s) { snprintf(b, n, "ssx3gizwipe_voice%d.vc", s); }
 void voice_save(int s)
@@ -58,7 +62,7 @@ void voice_save(int s)
     FILE *f = fopen(p, "wb");
     if (!f) return;
     u16 h[2] = { VC_RATE, (u16)C[s].n };
-    fwrite("SVC1", 4, 1, f); fwrite(h, 2, 2, f); fwrite(&C[s].fx, sizeof(VoiceFx), 1, f); fwrite(C[s].raw, 1, C[s].n, f);
+    fwrite("SVC2", 4, 1, f); fwrite(h, 2, 2, f); fwrite(&C[s].fx, sizeof(VoiceFx), 1, f); fwrite(C[s].raw, 1, C[s].n, f);
     fclose(f);
 }
 void voice_clear(int s)
@@ -76,10 +80,12 @@ void voice_init(bool have_fat)
         char p[40]; path(p, sizeof(p), s);
         FILE *f = fopen(p, "rb");
         if (!f) continue;
-        char m[4]; u16 h[2]; VoiceFx fx;
-        if (fread(m, 4, 1, f) == 1 && !memcmp(m, "SVC1", 4) && fread(h, 2, 2, f) == 2 && fread(&fx, sizeof(fx), 1, f) == 1
+        char m[4]; u16 h[2]; VoiceFx fx = FX0;
+        int v = fread(m, 4, 1, f) == 1 && !memcmp(m, "SVC", 3) ? m[3] - '0' : 0;
+        if ((v == 1 || v == 2) && fread(h, 2, 2, f) == 2 && fread(&fx, v == 1 ? 8 : sizeof(fx), 1, f) == 1
             && h[1] > 0 && h[1] <= VC_MAX && (C[s].raw = malloc(h[1])) && fread(C[s].raw, 1, h[1], f) == h[1]) {
             C[s].n = h[1]; C[s].fx = fx;
+            if (v == 1) { C[s].fx.tone = C[s].fx.bass = 0; C[s].fx.lp = C[s].fx.hp = 0; }
             if (C[s].fx.vol > 10) C[s].fx.vol = 10;
             voice_apply(s);
         } else { free(C[s].raw); C[s].raw = NULL; }

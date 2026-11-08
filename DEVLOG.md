@@ -1022,5 +1022,26 @@ what the riders look like.
   until power-off (the screen says so).
 * The options use about 50 KB of RAM a slot at most; racing cost unchanged (R&B 122.6 lines vs 122.8).
 
+## Stage 74: music fades out on Voice Clips; the public repository
+* The music fades out (~0.6 s) on the Voice Clips screen so the takes can be heard, and back in on leaving it
+  (music_duck / music_duck_step: a duck factor on the stream's channel volume).
+* The repository (code and tools only): tools/build_assets.py takes the Gizmondo zip or folder and writes every
+  nitrofs file plus the headers gen_tables.py reads from the exe; the game's English texts the source shows are now
+  XT_<id> macros made at build time by tools/gen_text.py from the exe (tools/xtext.txt: offsets and hashes only).
+  From a fresh clone and the Gizmondo files, the ROM comes out byte-identical to this stage's.
+
+## Stage 75: Voice Clips - tone, bass, filters; stronger autotune and chorus; clips heard in races
+* New sliders: Tone (-5..+5: a high shelf at 2.5 kHz, 3 dB a step), Bass (-5..+5: a low shelf at 200 Hz),
+  Low-pass (Off, 4000 Hz down to 300 Hz) and High-pass (Off, 80 Hz up to 2 kHz), 12 dB/octave biquads. The edit
+  list is 13 rows in the small type. Saves are "SVC2" (12-byte settings); SVC1 clips still load.
+* Autotune: 1..5 pulls the voice toward the nearest semitone (5: fully); 6..10 also holds each note until the
+  voice moves well off it, snaps to a major pentatonic scale and retunes at once - the stepped, robotic sound.
+  Voiced frames are found more readily (correlation r > 0.5, was 0.63).
+* Chorus: now two extra voices, detuned sharp and flat (+-14 cents, up to +-28 at 10) 25 / 38 ms behind and
+  slowly swept, mixed in up to as loud as the voice - an ensemble instead of the barely audible comb it was.
+* In races: the music dips to 30 % while a clip plays (they were masked by it); passing plays on every other
+  pass at most 8 s apart (was one in three, 12 s apart, the wait spent even when nothing played). A race in
+  melonDS confirms the clip path plays in a race.
+
 ## Not done yet / next
 * Download Play (see stage 41).

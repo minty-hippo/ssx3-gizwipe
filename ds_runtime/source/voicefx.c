@@ -69,7 +69,7 @@ static int detect_lag(const s16 *x, int n, int at, int fs, int *clarity)
 
 // --- a two-tap delay-line pitch shifter with a time-varying ratio (Q16): the taps sweep a 30 ms window at
 // (1 - ratio) samples per sample, half a window apart, cross-faded so each is silent as it wraps
-static void shift(const s16 *x, int n, s16 *y, const s32 *ratio_q16, int fs)
+static void shift(const s16 *x, int n, s16 *y, const s32 *ratio_q16, int fs, bool hard)
 {
     int L = fs * 30 / 1000; if (L < 64) L = 64;
     s32 Lq = L << 16;
@@ -79,7 +79,7 @@ static void shift(const s16 *x, int n, s16 *y, const s32 *ratio_q16, int fs)
         if (!(i & 2047)) vfx_idle();
         s32 r = ratio_q16[i / HOP];
         s32 rn = ratio_q16[i / HOP + 1];
-        r += (rn - r) / HOP * (i % HOP);                   // smooth across the frame (HOP a power of two)
+        if (!hard) r += (rn - r) / HOP * (i % HOP);        // smooth across the frame (HOP a power of two)
         s32 acc = 0;
         for (int t = 0; t < 2; t++) {
             s32 dt = d + (t ? Lq / 2 : 0); if (dt >= Lq) dt -= Lq;
@@ -105,6 +105,52 @@ static s32 lfo(s32 ph)                                      // ph: 0..65535 a cy
     return t < 0x8000 ? v : -v;
 }
 
+// --- the equaliser: tone (a high shelf at 2.5 kHz, -5..+5 x 3 dB), bass (a low shelf at 200 Hz, -5..+5 x 3 dB),
+// low-pass (1..10: 4000 Hz down to 300 Hz) and high-pass (1..10: 80 Hz up to 2 kHz), 12 dB/octave each
+typedef struct { s32 b0, b1, b2, a1, a2; } Bq;              // Q14
+static Bq bq_make(int type, float f0, float gain_db, int fs)
+{
+    float A = powf(10.0f, gain_db / 40.0f), w = 6.2831853f * f0 / fs, c = cosf(w), sn = sinf(w);
+    float b0, b1, b2, a0, a1, a2;
+    if (type == 0) {        // low-pass (Q 0.707)
+        float al = sn / (2 * 0.7071f);
+        b0 = (1 - c) / 2; b1 = 1 - c; b2 = (1 - c) / 2; a0 = 1 + al; a1 = -2 * c; a2 = 1 - al;
+    } else if (type == 1) { // high-pass
+        float al = sn / (2 * 0.7071f);
+        b0 = (1 + c) / 2; b1 = -(1 + c); b2 = (1 + c) / 2; a0 = 1 + al; a1 = -2 * c; a2 = 1 - al;
+    } else {                // 2 low shelf, 3 high shelf (slope 1)
+        float al = sn / 2 * sqrtf(2.0f), sa = 2 * sqrtf(A) * al;
+        if (type == 2) {
+            b0 = A * ((A + 1) - (A - 1) * c + sa); b1 = 2 * A * ((A - 1) - (A + 1) * c); b2 = A * ((A + 1) - (A - 1) * c - sa);
+            a0 = (A + 1) + (A - 1) * c + sa; a1 = -2 * ((A - 1) + (A + 1) * c); a2 = (A + 1) + (A - 1) * c - sa;
+        } else {
+            b0 = A * ((A + 1) + (A - 1) * c + sa); b1 = -2 * A * ((A - 1) + (A + 1) * c); b2 = A * ((A + 1) + (A - 1) * c - sa);
+            a0 = (A + 1) - (A - 1) * c + sa; a1 = 2 * ((A - 1) - (A + 1) * c); a2 = (A + 1) - (A - 1) * c - sa;
+        }
+    }
+    Bq q = { (s32)(b0 / a0 * 16384), (s32)(b1 / a0 * 16384), (s32)(b2 / a0 * 16384), (s32)(a1 / a0 * 16384), (s32)(a2 / a0 * 16384) };
+    return q;
+}
+static void bq_run(const Bq *q, s32 *z, int n)
+{
+    s32 x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (int i = 0; i < n; i++) {
+        if (!(i & 4095)) vfx_idle();
+        s32 x0 = z[i];
+        s64 acc = (s64)q->b0 * x0 + (s64)q->b1 * x1 + (s64)q->b2 * x2 - (s64)q->a1 * y1 - (s64)q->a2 * y2;
+        s32 y0 = (s32)(acc >> 14);
+        x2 = x1; x1 = x0; y2 = y1; y1 = y0; z[i] = y0;
+    }
+}
+static void eq(s32 *z, int n, int fs, const VoiceFx *fx)
+{
+    Bq q;
+    if (fx->hp > 0) { q = bq_make(1, 80.0f * powf(1.43f, fx->hp - 1), 0, fs); bq_run(&q, z, n); }
+    if (fx->lp > 0) { q = bq_make(0, 4000.0f * powf(0.75f, fx->lp - 1), 0, fs); bq_run(&q, z, n); }
+    if (fx->bass) { q = bq_make(2, 200.0f, fx->bass * 3.0f, fs); bq_run(&q, z, n); }
+    if (fx->tone) { q = bq_make(3, 2500.0f, fx->tone * 3.0f, fs); bq_run(&q, z, n); }
+}
+
 int vfx_render(const s8 *raw, int n, int fs, const VoiceFx *fx, s8 *out, int out_max)
 {
     if (n <= 0) return 0;
@@ -114,29 +160,48 @@ int vfx_render(const s8 *raw, int n, int fs, const VoiceFx *fx, s8 *out, int out
     if (!x || !y || !ratio) { free(x); free(y); free(ratio); return 0; }
     for (int i = 0; i < n; i++) { x[i] = raw[i] << 8; y[i] = raw[i] << 4; }   // (y: the 1/16 copy pitch detection reads)
 
-    // 1. pitch and autotune: one ratio a frame
+    // 1. pitch and autotune: one ratio a frame. Autotune 1..5 pulls each voiced frame toward the nearest semitone
+    // (5: all the way); 6..10 also holds a note until the voice moves 0.7 of a semitone off it and snaps to the notes
+    // of a major pentatonic scale, retuning at once - the stepped, robotic sound (10: every note held hardest)
     float base = powf(2.0f, fx->pitch / 12.0f);
-    float hold = 0;                                      // the last voiced frame's correction (held through gaps)
+    float corr = 0; int note = -1000;                    // the correction (semitones) and the held note
+    static const u8 PENTA[12] = { 1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 0 };   // C D E G A
     for (int f = 0; f < nf; f++) {
         if (!(f & 3)) vfx_idle();
         float r = base;
         if (fx->tune > 0) {
             int cl, lag = detect_lag(y, n, f * HOP + HOP / 2 - WIN / 2, fs, &cl);   // (centred on the frame)
-            if (lag > 0 && cl > 4096 * 4 / 10) {           // voiced (r > ~0.63)
+            if (lag > 0 && cl > 4096 / 4) {                // voiced (r > 0.5)
                 float hz = (float)fs * 256 / lag * base;    // its pitch after the shift
-                float m = 12.0f * log2f(hz / 440.0f) + 69.0f, t = floorf(m + 0.5f);
-                hold = (t - m) * fx->tune / 10.0f;          // 10: snapped hard to the semitone
-            }
-            r *= powf(2.0f, hold / 12.0f);
+                float m = 12.0f * log2f(hz / 440.0f) + 69.0f;
+                if (fx->tune <= 5) {
+                    float t = floorf(m + 0.5f);
+                    corr = (t - m) * fx->tune / 5.0f;
+                } else {
+                    float hyst = 0.5f + 0.04f * (fx->tune - 5);       // 0.54 .. 0.7 semitone
+                    if (note < -999 || fabsf(m - note) > hyst + 1.0f) {
+                        int t = (int)floorf(m + 0.5f), best = t;
+                        for (int d = 0; d < 3; d++) {                // the nearest pentatonic note
+                            if (PENTA[((t - d) % 12 + 12) % 12]) { best = t - d; break; }
+                            if (PENTA[((t + d) % 12 + 12) % 12]) { best = t + d; break; }
+                        }
+                        note = best;
+                    }
+                    corr = note - m;
+                }
+            } else note = -1000;
+            r *= powf(2.0f, corr / 12.0f);
         }
         ratio[f] = (s32)(r * 65536.0f);
     }
+    if (fx->tune > 5) ratio[nf - 1] = ratio[nf - 2];
     TMARK(0);
     bool shifted = fx->pitch != 0 || fx->tune > 0;
-    if (shifted) shift(x, n, y, ratio, fs); else memcpy(y, x, n * 2);
+    if (shifted) shift(x, n, y, ratio, fs, fx->tune > 5); else memcpy(y, x, n * 2);
 
     TMARK(1);
-    // 2. chorus ("choral"): three voices 14 / 21 / 28 ms back, each swept +-3 ms at its own slow rate
+    // 2. choral: two more voices a little sharp and flat (+-14 cents x the slider / 5, at most +-28), 25 and 38 ms
+    // behind, each slowly swept, mixed in up to as loud as the voice itself - an ensemble rather than a faint comb
     int len = n;
     int echo_d = fx->echo > 0 ? fs * (40 + fx->echo_ms * 45) / 1000 : 0;   // 85..490 ms
     int tail = fx->echo > 0 ? echo_d * (2 + fx->echo / 3) : 0;
@@ -146,27 +211,32 @@ int vfx_render(const s8 *raw, int n, int fs, const VoiceFx *fx, s8 *out, int out
     if (!z) { free(x); free(y); free(ratio); return 0; }
     for (int i = 0; i < len; i++) z[i] = i < n ? y[i] : 0;
     if (fx->chorus > 0) {
-        static const int base_ms[3] = { 14, 21, 28 }; static const int rate_mhz[3] = { 700, 1100, 1500 };
-        s32 wet = fx->chorus * 4096 / 10, dry = 4096 - fx->chorus * 4096 / 25;
-        u32 ph[3], inc[3]; s32 dbase[3], depth = (s32)(((s64)fs * 3 << 16) / 1000);
-        for (int v = 0; v < 3; v++) {
-            ph[v] = (u32)v * 0x55555555u; inc[v] = (u32)((((u64)rate_mhz[v]) << 32) / 1000 / fs);
-            dbase[v] = (s32)(((s64)fs * base_ms[v] << 16) / 1000);
-        }
-        for (int i = 0; i < n; i++) {
-            if (!(i & 2047)) vfx_idle();
-            s32 acc = 0;
-            for (int v = 0; v < 3; v++) {
-                ph[v] += inc[v];
-                s32 dq = dbase[v] + (s32)(((s64)depth * lfo((s32)(ph[v] >> 16))) >> 12);
-                s32 pos = (i << 16) - dq;
-                if (pos < 0) continue;
-                int p = pos >> 16; s32 fr = pos & 0xffff; s32 a = y[p], b = p + 1 < n ? y[p + 1] : 0;
-                acc += a + (s32)(((s64)(b - a) * fr) >> 16);
+        s16 *v = malloc(n * 2);
+        if (v) {
+            static const int dly_ms[2] = { 25, 38 }, rate_mhz[2] = { 900, 1300 };
+            s32 wet = fx->chorus * 4096 / 10, dry = 4096 - fx->chorus * 4096 / 30;
+            for (int k = 0; k < 2; k++) {
+                float cents = (k ? -14.0f : 14.0f) * (fx->chorus < 5 ? 1.0f : fx->chorus / 5.0f);
+                s32 rq = (s32)(powf(2.0f, cents / 1200.0f) * 65536.0f);
+                for (int f = 0; f < nf; f++) ratio[f] = rq;
+                shift(y, n, v, ratio, fs, false);
+                u32 ph = (u32)k * 0x80000000u, inc = (u32)((((u64)rate_mhz[k]) << 32) / 1000 / fs);
+                s32 dbase = (s32)(((s64)fs * dly_ms[k] << 16) / 1000), depth = (s32)(((s64)fs * 2 << 16) / 1000);
+                for (int i = 0; i < n; i++) {
+                    if (!(i & 2047)) vfx_idle();
+                    ph += inc;
+                    s32 pos = (i << 16) - dbase - (s32)(((s64)depth * lfo((s32)(ph >> 16))) >> 12);
+                    if (pos < 0) continue;
+                    int p = pos >> 16; s32 fr = pos & 0xffff; s32 a0 = v[p], b0 = p + 1 < n ? v[p + 1] : 0;
+                    z[i] += (s32)((((s64)(a0 + (s32)(((s64)(b0 - a0) * fr) >> 16))) * wet) >> 12) / 2;
+                }
             }
-            z[i] = (y[i] * dry >> 12) + (acc / 3 * wet >> 12);
+            for (int i = 0; i < n; i++) z[i] = (s32)(((s64)z[i] * dry) >> 12);
+            free(v);
         }
     }
+    // 2b. tone, bass and the filters: biquads (RBJ cookbook, Q14 coefficients) over the voice
+    eq(z, len, fs, fx);
     TMARK(2);
     // 3. echo: feedback delay, the repeats fading by the slider (0.15 .. 0.6)
     if (fx->echo > 0) {

@@ -13,6 +13,7 @@ VoiceFx *voice_fx(int slot);
 void voice_apply(int slot);                // re-render after the sliders change
 void voice_play(int slot);                 // the clip with its effects (fx volume)
 void voice_stop(void);
+bool voice_tick(void);                     // once a frame: true while a clip plays (the music ducks under it)
 bool voice_record(int slot);               // start a take (stops by itself at VC_MAX); false: no microphone
 bool voice_recording(void);
 int  voice_rec_ms(void);                   // how long the take has run

@@ -1716,13 +1716,16 @@ int main(int argc, char **argv)
                     int was_place = place;
                     place = 1;                                     // places by race-line progress (the exe: every 750 ms)
                     for (int k = 0; k < nghost; k++) if (ghosts[k].finished || ghosts[k].s > ph.s) place++;
-                    {   // port (Voice Clips): now and then on passing a rider - one pass in three, at most every 12 s,
+#ifdef TEST_VOICE
+                    if (race_steps == 150 || race_steps == 400) voice_play(VC_PASS);   // test builds: the clip path in a race
+#endif
+                    {   // port (Voice Clips): now and then on passing a rider - every other pass at most, 8 s apart,
                         // not in the first 5 s (the start's shuffle)
                         static int pass_at = -1000;
                         if (race_steps == 1) pass_at = -1000;
-                        if (!replay && place < was_place && race_steps > 125 && race_steps - pass_at > 300 && voice_has(VC_PASS)) {
-                            pass_at = race_steps;
-                            if (rand() % 3 == 0) voice_play(VC_PASS);
+                        if (!replay && place < was_place && race_steps > 125 && race_steps - pass_at > 200 && voice_has(VC_PASS)
+                            && rand() % 2 == 0) {                  // (every other pass at most, 8 s apart)
+                            pass_at = race_steps; voice_play(VC_PASS);
                         }
                     }
 #ifdef TEST_FINISH
@@ -1849,6 +1852,7 @@ int main(int argc, char **argv)
         int l_phys = NOW_LINE();
         track_update_stream(&trk, replay ? rpg.s : ph.s, 2);
         music_update(vblanks, false);
+        music_duck(voice_tick() ? 30 : 100); music_duck_step();     // (Voice Clips: the music dips under a clip)
         int l_stream = NOW_LINE();
 
         // chase camera (cam_step, 0x75808): interpolate the last two steps, then keep it out of the ground / walls
