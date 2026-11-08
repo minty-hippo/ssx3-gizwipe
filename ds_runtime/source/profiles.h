@@ -1,0 +1,50 @@
+#include "xtext.h"
+// SSX 3 GizWipe - rider profiles (0x2b6cc "Rider Profile": Rider DNA / Rider Faves / Rider Q&A / Rider BIO),
+// the exe's English strings (tables 0xade18, 0xadeb8, 0xadf58, 0xadcc4 via 0xa5cb4), indexed by exe character.
+#pragma once
+static const char *const PROF_TITLE[4] = { XT_119, XT_120, XT_121, XT_122 };
+static const char *const PROF_L0[8] = { XT_123, XT_124, XT_125, XT_126, XT_127, XT_128, XT_129, XT_130 };
+static const char *const PROF_L1[8] = { XT_131, XT_132, XT_133, XT_134, XT_135, XT_136, XT_137, XT_138 };
+static const char *const PROF_Q[4] = { XT_139, XT_140, XT_141, XT_142 };
+static const struct { const char *dna[8], *fav[8], *qa[4], *bio; } PROFILE[10] = {
+    { { XT_143, "22", XT_144, XT_145, XT_146, XT_147, XT_148, "AB" },
+      { XT_149, XT_150, XT_151, XT_152, XT_153, XT_154, XT_155, XT_156 },
+      { XT_157, XT_158, XT_159, XT_160 },
+      XT_161 },
+    { { XT_152, "21", XT_162, XT_163, XT_164, XT_165, XT_166, "AB" },
+      { XT_167, XT_168, XT_169, XT_143, XT_170, "BMX", XT_171, XT_156 },
+      { XT_172, XT_173, XT_174, XT_175 },
+      XT_176 },
+    { { XT_177, "28", XT_178, XT_179, XT_180, XT_181, XT_166, "B" },
+      { XT_182, XT_183, XT_184, XT_143, XT_185, XT_154, XT_186, XT_156 },
+      { XT_187, XT_188, XT_189, XT_190 },
+      XT_191 },
+    { { XT_153, "12", XT_192, XT_193, XT_146, XT_194, XT_148, "B" },
+      { XT_195, XT_196, XT_197, XT_198, XT_143, XT_199, XT_200, XT_201 },
+      { XT_202, XT_203, XT_204, XT_205 },
+      XT_206 },
+    { { XT_207, "19", XT_208, XT_209, XT_210, XT_211, XT_148, "B" },
+      { XT_212, XT_213, XT_214, XT_215, XT_198, XT_216, XT_217, XT_218 },
+      { XT_219, XT_220, XT_221, XT_222 },
+      XT_223 },
+    { { XT_224, "26", XT_225, XT_226, XT_180, XT_227, XT_166, "A" },
+      { "Men", XT_228, XT_229, XT_177, XT_215, XT_230, XT_231, XT_156 },
+      { XT_232, XT_233, XT_234, XT_235 },
+      XT_236 },
+    { { XT_198, "26", XT_237, XT_238, XT_146, XT_239, XT_148, "A" },
+      { XT_240, XT_241, XT_242, XT_153, XT_177, XT_243, XT_244, XT_156 },
+      { XT_245, XT_246, XT_247, XT_248 },
+      XT_249 },
+    { { XT_250, "18", XT_251, XT_252, XT_146, XT_253, XT_148, "AB" },
+      { XT_254, XT_255, XT_256, XT_185, XT_152, XT_257, XT_258, XT_259 },
+      { XT_260, XT_261, XT_262, XT_263 },
+      XT_264 },
+    { { XT_215, "18", XT_144, XT_265, XT_146, XT_266, XT_166, "O" },
+      { XT_267, XT_267, XT_268, XT_267, XT_224, XT_257, XT_269, XT_201 },
+      { XT_270, XT_271, XT_272, XT_273 },
+      XT_274 },
+    { { XT_185, "19", XT_275, XT_276, XT_277, XT_278, XT_148, "B" },
+      { XT_279, XT_280, XT_281, XT_170, XT_177, XT_282, XT_283, XT_201 },
+      { XT_284, XT_285, XT_286, XT_287 },
+      XT_288 },
+};

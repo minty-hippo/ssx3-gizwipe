@@ -1,0 +1,22 @@
+# everything made from the game: never committed
+build/
+ds_runtime/build/
+ds_runtime/nitrofs/
+*.nds
+ds_runtime/source/sxtab.h
+ds_runtime/source/anim_ids.h
+ds_runtime/source/grabs.h
+ds_runtime/source/trick_str.h
+ds_runtime/source/xtext.h
+# the game itself, in case it is kept nearby
+*.pak
+*.exe
+*.zip
+gzga200026/
+# host test binaries and captures
+ds_runtime/hosttest/*
+!ds_runtime/hosttest/*.c
+!ds_runtime/hosttest/*.h
+!ds_runtime/hosttest/*.py
+*.wav
+__pycache__/
