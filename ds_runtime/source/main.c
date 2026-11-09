@@ -141,6 +141,9 @@ ITCM_CODE static void quad_front(const float c[3], const float cam[3], const flo
 ITCM_CODE static int draw_fog(const Track *t, const float cam[3], float fx, float fz)
 {
     if (!tex_fog || !t->nfogs) return 0;
+#ifdef TEST_NOFOG
+    return 0;
+#endif
     glBindTexture(0, tex_fog);
     glColor(RGB15(31, 31, 31));
     float rx = fz, rz = -fx;
@@ -493,7 +496,12 @@ static const char *TRACKS[] = { "ABC1", "ASS1", "BHP1", "CRA3", "DBC2", "DRA4",
 
 static volatile u32 vblanks;
 void vfx_idle(void) { music_update(vblanks, false); }   // (voicefx.c: the music through a clip's processing)
-static int track_cull = POLY_CULL_FRONT;   // consistent winding; FRONT because of the X-mirrored projection
+#ifdef TEST_NOCULL
+static int track_cull = POLY_CULL_NONE;
+#else
+static int track_cull = POLY_CULL_FRONT;
+#endif
+//   // consistent winding; FRONT because of the X-mirrored projection
 static volatile bool rumble_live;                 // the Rumble Pak may run (not paused / in a replay)
 static void on_vblank(void) { vblanks++; submap_vblank(); rumble_frame(1, rumble_live); }
 // a scanline clock across frames (263 lines a frame; the vblank interrupt counts at line 192)
@@ -1190,6 +1198,7 @@ static void load_best(int *best)
         if (on < 6 || g_opt.rumble > 1) g_opt.rumble = 1;                           // (before stage 64: no rumble option)
         if (on < 8 || g_opt.voice > 1 || g_opt.vduck > 1) { g_opt.voice = 0; g_opt.vduck = 1; }   // (before stage 76: Voice Clips off)
         if (on < 9 || g_opt.board > 1) g_opt.board = 0;                              // (before stage 79: no custom board)
+        if (on < 10) g_opt.rider = 0xff;                                              // (before stage 82: no last rider)
         if (g_opt.master > 10) g_opt.master = 10; if (g_opt.fx > 10) g_opt.fx = 10; if (g_opt.cam > 2) g_opt.cam = 1; if (g_opt.fps30 > 1) g_opt.fps30 = 0;
     }
     fclose(f);
@@ -1447,7 +1456,7 @@ int main(int argc, char **argv)
     static int best_ms[15];                                       // per event
     bool in_menu = true;
     career_defaults();
-    load_best(best_ms); shadow_load_all(); fe_apply_options(); voice_init(have_fat_g); board_init(have_fat_g);
+    load_best(best_ms); if (g_opt.rider < NRIDERS) fe_set_rider(g_opt.rider); shadow_load_all(); fe_apply_options(); voice_init(have_fat_g); board_init(have_fat_g);
     fe_rider = &rider; fe_clip = id_clip; fe_best = best_ms;
     bool uber_tip_done = false;
     int race = R_INTRO, intro_ms = 0, count_ms = 0, race_steps = 0, fin_time = 0, spin = 0, place = 1, fin_place = 0; bool new_best = false;
@@ -2019,7 +2028,11 @@ int main(int argc, char **argv)
         {   // test builds: the camera, its target and the drawn rider each frame (dsrun --ram, magic SSXCAM1)
             typedef struct { s32 cam[3], tg[3], rp[3], py, vy; u8 rail, air, pipe, race; s32 st[4][3]; } CamE;
             static struct { char magic[8]; u32 n; CamE e[7000]; } cl = { "SSXCAM1", 0, {{{0}}} };
-            if (race == R_RACE && !paused && cl.n < 7000) {
+#ifndef TEST_CAMSKIP
+#define TEST_CAMSKIP 0
+#endif
+            static u32 cam_rf;                         // (TEST_CAMSKIP: the race's first frames left out)
+            if (race == R_RACE && !paused && ++cam_rf > TEST_CAMSKIP && cl.n < 7000) {
                 CamE *e = &cl.e[cl.n++];
                 for (int k = 0; k < 3; k++) { e->cam[k] = (s32)(cam_pos[k] * 16); e->tg[k] = (s32)(tg[k] * 16); e->rp[k] = (s32)(rp[k] * 16); }
                 e->py = ph.pos[1]; e->vy = ph.vel[1]; e->rail = ph.rail_state; e->air = ph.air; e->pipe = ph.pipe; e->race = race;
@@ -2032,7 +2045,15 @@ int main(int argc, char **argv)
         glPolyFmt(POLY_ALPHA(31) | track_cull | POLY_FOG);
         int l_cam = NOW_LINE();
         sky_draw(cam_pos);
-        glPolyFmt(POLY_ALPHA(31) | track_cull | POLY_FOG);
+        // port: the course drawn from both sides while the frame has room. The Gizmondo culled nothing: where its
+        // pieces don't meet (R&B's kicker at ~70 % and the slope behind it) the backs of the faces behind filled the
+        // gap; culled, the gap showed the clear colour - white wedges. Both sides cost ~20-40 % more polygons (Snow
+        // Jam reached the 2048 limit), so the busy frames cull as before: off over 1750 polygons, back under 1100
+        static bool both_sides = true;
+        if (both_sides && last_polys > 1750) both_sides = false;
+        else if (!both_sides && last_polys < 1100) both_sides = true;
+        int course_cull = both_sides && track_cull == POLY_CULL_FRONT ? POLY_CULL_NONE : track_cull;
+        glPolyFmt(POLY_ALPHA(31) | course_cull | POLY_FOG);
         trk.cam_y_next = (s32)cam_pos[1];
         {   // the view's downward tilt (tan, x 1024) for the culling's margin
             float vx = tg[0] - cam_pos[0], vy = tg[1] - cam_pos[1], vz = tg[2] - cam_pos[2], hl = sqrtf(vx * vx + vz * vz);
@@ -2649,7 +2670,7 @@ int main(int argc, char **argv)
                 glGetInt(GL_GET_POLYGON_RAM_COUNT, &near_polys);
                 glGetInt(GL_GET_VERTEX_RAM_COUNT, &near_verts);
             }
-            glPolyFmt(POLY_ALPHA(31) | track_cull | POLY_FOG); glColor(RGB15(31, 31, 31));
+            glPolyFmt(POLY_ALPHA(31) | course_cull | POLY_FOG); glColor(RGB15(31, 31, 31));
             submitted += track_draw_far(&trk);
         }
 

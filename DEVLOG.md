@@ -1126,5 +1126,34 @@ what the riders look like.
 * The main menu's horizontal dashed line now sits level with the title rule under the logo; it ran through
   the first item ([...]).
 
+## Stage 82: R&B's white wedges (again); Metro City's chevrons and buildings; designer eraser and sticker size / turn; last rider
+* R&B, ~70 % (the blue kicker below the billboards): two white wedges in the course, with full detail forced too.
+  Not the near plane this time (a whole run crosses it nowhere), nor the fog patches or polygon RAM (1228 at most):
+  the kicker and the slope behind it are separate pieces that don't meet. The Gizmondo culls nothing, so through
+  the gap it showed the backs of the faces behind it - snow; the DS culled those and the gap showed the clear
+  colour. The course is now drawn from both sides while the frame has room (off once the last frame passed 1750
+  polygons, back on under 1100): R&B 1228 -> 1404 polygons at most, Metro City 1836, Snow Jam 1825 (it reached the
+  2048 limit unculled throughout); 60 fps on all three. A hairline crack along the kicker's edge remains.
+* The track converter (tools/ds_track.py), every course rebuilt:
+  * back-to-back faces (the fence boards, many building panels) each move 1.5 units out along their own normal,
+    so drawn both sides they don't fight in the depth buffer; faces lying over one another facing the same way
+    (Metro City's buildings: 10 pairs) - a copy is dropped, otherwise the later one is lifted 3 units (the
+    building flicker);
+  * fences (materials whose faces all stand upright: arrowfence, the chevron boards along the course edges) keep
+    full detail in the simplified LODs - simplifying flattened and twisted the thin boards (Metro City's blue
+    chevrons lying skewed on the ground in the distance) - and the ground keeps the corners they stand on; the
+    farthest, fogged LOD leaves them out;
+  * faces facing down with nothing above them (seen from above, so wound the wrong way: R&B's kicker run-ups,
+    Metro City's roofs) are drawn reversed for the frames that still cull; the collision keeps the original.
+* Board designer:
+  * ERASE: back to the bare board (L/R its size);
+  * stickers: SMALLER / BIGGER (0.5x to 3x, L/R) and TURN L / TURN R (15-degree steps, X/A); the sticker follows
+    the stylus over the canvas, shown as it will be, and goes down where the stylus is lifted;
+  * the tool row is narrower (the music ticker covers the bottom 12 rows: the new buttons sit above it);
+  * the dashed lines on the top screen run between and above the two faces instead of through the top one.
+* Rider select starts on the last rider raced (saved with the options; Options gains a byte).
+* Test builds: TEST_LOD0 (full detail everywhere), TEST_SKIPMAT=<mask> (course materials left out), TEST_NOFOG,
+  TEST_NOCULL, TEST_CAMSKIP=<frames> (the camera log starts later in the race).
+
 ## Not done yet / next
 * Download Play (see stage 41).

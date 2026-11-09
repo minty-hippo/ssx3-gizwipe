@@ -242,6 +242,113 @@ def convert_texture(path, size):
     pal15 = np.array([rgb15(c) for c in pal], np.uint16)
     return dict(w=tw, h=th, texels=idx.astype(np.uint8).tobytes(), pal=pal15.tobytes(), flags=flags)
 
+
+def _clip2(subj, clipper):
+    """the part of convex polygon subj inside convex polygon clipper (2D, both counter-clockwise)"""
+    out = subj
+    for i in range(len(clipper)):
+        a, b = clipper[i], clipper[(i + 1) % len(clipper)]; inp = out; out = []
+        if not inp: break
+        side = lambda p: (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
+        for j in range(len(inp)):
+            P, Q = inp[j], inp[(j + 1) % len(inp)]; sp, sq = side(P), side(Q)
+            if sp >= 0: out.append(P)
+            if (sp >= 0) != (sq >= 0):
+                t = sp / (sp - sq); out.append((P[0] + t * (Q[0] - P[0]), P[1] + t * (Q[1] - P[1])))
+    return out
+
+
+def _area2(p):
+    return 0.5 * sum(p[i][0] * p[(i + 1) % len(p)][1] - p[(i + 1) % len(p)][0] * p[i][1] for i in range(len(p)))
+
+
+def fix_coplanar(m, lift=3, log=print):
+    """Faces drawn over one another: same plane, same facing, overlapping (Metro City's buildings have ten such
+    pairs). The Gizmondo drew the later one over the earlier; on the DS their depths tie and they flicker. An exact
+    copy (same corners) is dropped; otherwise the later face gets its own corners, lifted `lift` units off the
+    plane so it is always the one seen. Back-to-back faces (the fence boards, many building panels: the same plane
+    facing the other way) each move `lift` / 2 out along their own normals: the course is drawn unculled when there
+    is room (see main.c), and then each side's own face is the nearer one."""
+    from itertools import combinations
+    V = m['verts'].astype(np.float64); faces = m['faces']
+    info = {}
+    for i, f in enumerate(faces):
+        if f['flags'] & 1: continue
+        p = V[f['idx']]; n = np.cross(p[1] - p[0], p[2] - p[0]); l = np.linalg.norm(n)
+        if l < 1e-6: continue
+        n = n / l; d = float(n @ p[0])
+        info[i] = (n, d, p)
+    buckets = {}
+    for i, (n, d, p) in info.items():                  # (by the plane whichever way it faces)
+        sg = 1 if n[int(np.argmax(abs(n)))] > 0 else -1
+        buckets.setdefault((tuple(np.round(n * sg * 30).astype(int)), int(round(d * sg / 4))), []).append(i)
+    drop, lifted, apart = set(), set(), set()
+    for ids in buckets.values():
+        for a, b in combinations(sorted(ids), 2):
+            if a in drop or b in drop: continue
+            na, da, pa = info[a]; nb, db, pb = info[b]
+            back = na @ nb < -0.999
+            if back:
+                if abs(da + db) > 1.0: continue
+            elif na @ nb < 0.999 or abs(da - db) > 1.0: continue
+            ax = int(np.argmax(abs(na))); k = [j for j in range(3) if j != ax]
+            A = [tuple(x) for x in pa[:, k]]; B = [tuple(x) for x in pb[:, k]]
+            if _area2(A) < 0: A = A[::-1]
+            if _area2(B) < 0: B = B[::-1]
+            lo = np.maximum(np.min(A, 0), np.min(B, 0)); hi = np.minimum(np.max(A, 0), np.max(B, 0))
+            if (hi - lo).min() <= 1: continue
+            c = _clip2(A, B)
+            if len(c) < 3 or abs(_area2(c)) < 400: continue
+            if back: apart.add(a); apart.add(b)
+            elif sorted(map(tuple, pa.astype(int))) == sorted(map(tuple, pb.astype(int))): drop.add(b)
+            else: lifted.add(b)
+    apart -= drop
+    verts = [m['verts']]; vcol = [m['vcolors']]; nv = len(m['verts'])
+    for b in sorted(lifted | apart):
+        f = faces[b]; n = info[b][0]
+        P = np.round(V[f['idx']] + n * (lift if b in lifted else lift / 2)).astype(m['verts'].dtype)
+        verts.append(P); vcol.append(m['vcolors'][f['idx']])
+        f['idx'] = list(range(nv, nv + len(P))); nv += len(P)
+    m['verts'] = np.concatenate(verts); m['vcolors'] = np.concatenate(vcol)
+    m['faces'] = [f for i, f in enumerate(faces) if i not in drop]
+    if drop or lifted or apart: log(f'  overlapping faces: {len(drop)} copies dropped, {len(lifted)} lifted {lift} units, {len(apart)} back-to-back moved apart')
+    return m
+
+
+def find_inverted(m, cell=1024):
+    """Faces turned away from where they are seen: facing down (normal y < -0.3) with nothing of the course above
+    them, so their side open to the sky is the back. The Gizmondo drew them anyway (R&B's kicker run-ups at ~70 %,
+    Metro City's roofs); the DS culls back faces - white wedges in the course. Returned for drawing reversed (the
+    collision keeps the original winding)."""
+    import collections
+    V = m['verts'].astype(np.float64); F = m['faces']
+    vis = [i for i, f in enumerate(F) if not f['flags'] & 1]
+    tri, grid = [], collections.defaultdict(list)
+    for i in vis:
+        idx = F[i]['idx']
+        for t in ([0, 1, 2], [0, 2, 3])[:len(idx) - 2]:
+            P = V[[idx[k] for k in t]]; ti = len(tri); tri.append((i, P))
+            lo = (P[:, [0, 2]].min(0) // cell).astype(int); hi = (P[:, [0, 2]].max(0) // cell).astype(int)
+            for gx in range(lo[0], hi[0] + 1):
+                for gz in range(lo[1], hi[1] + 1): grid[(gx, gz)].append(ti)
+    out = set()
+    for i in vis:
+        P = V[F[i]['idx']]; n = np.cross(P[1] - P[0], P[2] - P[0]); l = np.linalg.norm(n)
+        if l < 1e-6 or n[1] / l > -0.3: continue
+        c = P.mean(0); hit = False
+        for ti in grid[(int(c[0] // cell), int(c[2] // cell))]:
+            j, T = tri[ti]
+            if j == i: continue
+            a, b, cc = T[:, [0, 2]]                       # the vertical through c, in the triangle's xz?
+            d = (b[1] - cc[1]) * (a[0] - cc[0]) + (cc[0] - b[0]) * (a[1] - cc[1])
+            if abs(d) < 1e-9: continue
+            w1 = ((b[1] - cc[1]) * (c[0] - cc[0]) + (cc[0] - b[0]) * (c[2] - cc[1])) / d
+            w2 = ((cc[1] - a[1]) * (c[0] - cc[0]) + (a[0] - cc[0]) * (c[2] - cc[1])) / d
+            if min(w1, w2, 1 - w1 - w2) < -1e-6: continue
+            if w1 * T[0, 1] + w2 * T[1, 1] + (1 - w1 - w2) * T[2, 1] > c[1] + 2: hit = True; break
+        if not hit: out.add(i)
+    return out
+
 class Blob:
     def __init__(self): self.b = bytearray()
     def align(self):
@@ -250,8 +357,20 @@ class Blob:
         self.align(); o = len(self.b); self.b += data; return o
 
 def convert(track_dir, out_path, seg_len=4000, tex_size=128, lod_ratios=(1.0, 0.55, 0.3, 0.1), log=print):
-    m = read_oct(os.path.join(track_dir, 'slope.oct'))
+    m = fix_coplanar(read_oct(os.path.join(track_dir, 'slope.oct')), log=log)
     V = m['verts'].astype(np.int64); vcol = m['vcolors']
+    # fences: materials whose faces all stand upright (arrowfence, the course edges' chevron boards). The simplified
+    # LODs flattened and twisted those thin boards (Metro City's chevrons lay skewed on the ground in the distance);
+    # they keep their full detail in every LOD, and the ground under them keeps the corners they stand on
+    vert_n = {}
+    for f in m['faces']:
+        if f['flags'] & 1: continue
+        p = V[f['idx'][:3]].astype(np.float64); n = np.cross(p[1] - p[0], p[2] - p[0]); l = np.linalg.norm(n)
+        if l < 1e-6: continue
+        c = vert_n.setdefault(f['tex'], [0, 0]); c[0] += 1; c[1] += abs(n[1]) / l < 0.3
+    fence_mat = {t for t, (a, b) in vert_n.items() if b >= 0.95 * a}
+    inverted = find_inverted(m)
+    if inverted: log(f'  {len(inverted)} faces drawn reversed (facing down, open to the sky)')
     rl = [s for s in m['splines'] if s['name'] == 'default'][0]['pts'].astype(float)
     cent = np.array([V[f['idx']].mean(0) for f in m['faces']], float)
     s, L = arclen_assign(cent, rl)
@@ -323,16 +442,27 @@ def convert(track_dir, out_path, seg_len=4000, tex_size=128, lod_ratios=(1.0, 0.
         assert np.abs(Lp).max() < 32767, f'segment {sg} too large: {np.abs(Lp).max()}'
         lcol = vcol[gidx]
         faces = [(m['faces'][fi]['idx'], m['faces'][fi]['uv'], m['faces'][fi]['tex']) for fi in fids]
+        # (for drawing: the inverted faces reversed; the collision below keeps `faces` as they are)
+        dfaces = [(idx[::-1], uv[::-1], mt) if fi in inverted else (idx, uv, mt) for (idx, uv, mt), fi in zip(faces, fids)]
         # face flag bit 0: collision only, never drawn (every such face is untextured - Metro City's, The Junction's
         # and Intimidator's invisible walls; they came out as plain white blocks). Kept for the collision grid.
         fvis = [not (m['faces'][fi]['flags'] & 1) for fi in fids]
         locked = np.array([len(used_by[g]) > 1 for g in gidx])
+        for fi in fids:                                   # (the fences' corners: see fence_mat)
+            if m['faces'][fi]['tex'] in fence_mat and not m['faces'][fi]['flags'] & 1:
+                for a in m['faces'][fi]['idx']: locked[remap[a]] = True
+        fence_lf = [([remap[a] for a in idx], uv, mt) for (idx, uv, mt), vis in zip(faces, fvis) if vis and mt in fence_mat]
         tris, tuv, tmat, tsurf, tvis = [], [], [], [], []
-        for (idx, uv, mt), fi, vis in zip(faces, fids, fvis):
+        tri_face = []
+        for k_, ((idx, uv, mt), fi, vis) in enumerate(zip(faces, fids, fvis)):
             li = [remap[a] for a in idx]
             for tri in ([0, 1, 2], [0, 2, 3])[:len(li) - 2]:
+                tri_face.append(k_)
                 tris.append([li[k] for k in tri]); tuv.append([uv[k] for k in tri]); tmat.append(mt)
                 tsurf.append((m['faces'][fi]['flags'] >> 16) & 15); tvis.append(vis)
+        ok_f = [t for t in tmat if t in fence_mat]
+        dtris = [[t[0], t[2], t[1]] if fids[k] in inverted else t for t, k in zip(tris, tri_face)]
+        dtuv = [[u[0], u[2], u[1]] if fids[k] in inverted else u for u, k in zip(tuv, tri_face)]
         # untextured far-LOD colour: vertex colour x mean texture colour of incident materials
         acc = np.zeros((len(gidx), 3)); cnt = np.zeros(len(gidx))
         for t_, mt, vis in zip(tris, tmat, tvis):
@@ -341,18 +471,18 @@ def convert(track_dir, out_path, seg_len=4000, tex_size=128, lod_ratios=(1.0, 0.
         flat_col = (lcol[:, :3] * (acc / np.maximum(cnt, 1)[:, None])).clip(0, 255).astype(np.uint8)
         lods = []
         wmap = weld(Lp)                                   # weld duplicate positions for far LODs
-        wtris = [[int(wmap[a]) for a in t] for t in tris]
+        wtris = [[int(wmap[a]) for a in t] for t in dtris]
         for li_, r in enumerate(lod_ratios):
             untextured = li_ == len(lod_ratios) - 1
             if li_ == 0:
-                lf = [([remap[a] for a in idx], uv, mt) for (idx, uv, mt), vis in zip(faces, fvis) if vis]
+                lf = [([remap[a] for a in idx], uv, mt) for (idx, uv, mt), vis in zip(dfaces, fvis) if vis]
             else:
-                ok = [i for i, t in enumerate(wtris) if len(set(t)) == 3 and tvis[i]]
-                ct, cm, cu = [wtris[i] for i in ok], [tmat[i] for i in ok], [tuv[i] for i in ok]
+                ok = [i for i, t in enumerate(wtris) if len(set(t)) == 3 and tvis[i] and tmat[i] not in fence_mat]
+                ct, cm, cu = [wtris[i] for i in ok], [tmat[i] for i in ok], [dtuv[i] for i in ok]
                 wlk = locked.copy()
                 for i in range(len(wlk)): wlk[wmap[i]] |= locked[i]
                 ct, cm, cu = drop_small(Lp.astype(float), ct, cm, cu, (0, 150, 250, 600)[min(li_, 3)], None if untextured else wlk)
-                tgt = max(4, int(len(tris) * r))
+                tgt = max(4, int((len(tris) - len(ok_f)) * r))
                 if untextured:
                     st, su, sm = simplify(Lp.astype(float), ct, cu, [0] * len(ct), np.zeros_like(locked), tgt, seam_cos=2.0)
                     lf = [(t, [tuple(x) for x in u], 0xFFFF) for t, u in zip(st, su)]
@@ -362,6 +492,7 @@ def convert(track_dir, out_path, seg_len=4000, tex_size=128, lod_ratios=(1.0, 0.
                     st, su, sm = simplify(Lp.astype(float), ct, cu, cm, wl, tgt)
                     lf = [(t, [tuple(x) for x in u], mt) for t, u, mt in zip(st, su, sm)]
                 lf = requad(Lp.astype(float), lf, check_uv=not untextured)
+                if not untextured: lf += fence_lf             # (the farthest, fogged LOD leaves the thin boards out)
             lists = []
             # v5: each material's faces split into TILE x TILE (x/z) tiles, each its own list with its box, so the
             # runtime can leave out the tiles outside the view or past the fog (the geometry engine works on all

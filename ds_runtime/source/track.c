@@ -403,6 +403,9 @@ ITCM_CODE static int lod_draw(Track *t, int seg, float sf, int bias)
     int lf = lod_base(t, seg, s, 400), lc = lod_base(t, seg, s, -400), l = lod_base(t, seg, s, 0);
     if (l >= 0 && prev >= 0 && lf >= 0 && lc >= 0 && prev >= lf && prev <= lc) l = prev;
     if (l < 0) return -1;
+#ifdef TEST_LOD0
+    return 0;
+#endif
     const SegRec *g = &t->segs[seg];
     int d = g->s0 - s;
     if (bias >= 2 && d > 7000 && lod_space(t, seg) < 0) return -1;   // heavy load: what is past the fog's end (5750)
@@ -609,6 +612,9 @@ ITCM_CODE static s32 tile_fw(const Track *t, const s32 org[3], int x0, int z0, i
 ITCM_CODE static int draw_list(Track *t, int i, const ListRec *lr, u8 *base)
 {
     int m = lr->material;
+#ifdef TEST_SKIPMAT
+    if (((u32)(TEST_SKIPMAT) >> (m == 0xFFFF ? 16 : m)) & 1) return 0;
+#endif
 #ifdef TEST_NOTEX
     if (1) glBindTexture(0, 0); else
 #endif
