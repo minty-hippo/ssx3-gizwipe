@@ -1198,5 +1198,15 @@ screen, away from the large empty areas, every 20 frames over two minutes of R&B
 * The space LOD's "ahead" test also takes what is ahead of the camera (not only of the rider's travel).
 * Test builds: TEST_GRIND_RAIL=<n> (the rail TEST_GRIND drops the rider onto).
 
+## Stage 85: board designer - stickers placed with the buttons; previews the right way round
+* The skull graphic is no longer among the stickers (tools/ds_stickers.py: 17 now).
+* Stickers: pick one on the strip; it is shown on the canvas where it will go, with a mark at its middle. The
+  d-pad moves it (faster when held), L/R size it, X/Y turn it (15-degree steps), A puts it down; the stylus can
+  also move it, and the row under the strip has SMALLER / BIGGER / TURN L / TURN R / PLACE. (Y is undo only for
+  the other tools; the UNDO button works for all.)
+* Top screen: the faces were drawn as the canvas mirrored across its diagonal (the texture's columns left to
+  right). They are now the canvas turned a quarter clockwise (the canvas's left end at the top, its top edge on
+  the right), so a design reads the same as where it was drawn.
+
 ## Not done yet / next
 * Download Play (see stage 41).

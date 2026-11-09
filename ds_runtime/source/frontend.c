@@ -1142,27 +1142,43 @@ bool fe_frame(u32 down, int *event, int *rider, int nriders, const char *const *
         static const char *const TN[T_N] = { "SIDE", "PEN", "ERASE", "STICKER", "FILL", "UNDO", "" };
         enum { BH = 12, CY = 15, CH = 128, SY = 145, KY = 167 };   // (rows 180 on: the music ticker)
         static const u16 BX[T_N + 1] = { 0, 34, 64, 102, 148, 178, 214, 256 };   // the buttons' edges
-        static u8 *undo; static int lastx = -1, lasty = -1, up_t, stk_x = -1, stk_y;
+        static u8 *undo; static int lastx = -1, lasty = -1, up_t, mv_t;
+        static int stk_x = 128, stk_y = CY + CH / 2;      // the sticker's place (screen pixels over the canvas)
         int face;
         // (a canvas point: across the screen = along the board, texel row v; down = across it, column u)
         if (!undo) undo = malloc(sizeof(board_px));
         u32 hk = keysHeld();
         bool stk = bd_tool == T_STICK;
         if (down & KEY_B) { board_save(); board_changed(); fe_enter(FE_MAIN); return false; }
-        if (stk) {                                     // the sticker: L/R size, X/A turn
+        bool place = false;
+        if (stk) {   // the sticker, shown where it will go: the d-pad moves it (faster when held), L/R size, X/Y turn,
+                     // A puts it down (the stylus moves it too)
             if (down & KEY_L) { bd_ssc = bd_ssc > 2 ? bd_ssc - 1 : 2; dirty = true; }
             if (down & KEY_R) { bd_ssc = bd_ssc < 12 ? bd_ssc + 1 : 12; dirty = true; }
             if (down & KEY_X) { bd_srot = (bd_srot + 23) % 24; dirty = true; }
-            if (down & KEY_A) { bd_srot = (bd_srot + 1) % 24; dirty = true; }
+            if (down & KEY_Y) { bd_srot = (bd_srot + 1) % 24; dirty = true; }
+            if (down & KEY_A) place = true;
+            u32 dp = hk & (KEY_LEFT | KEY_RIGHT | KEY_UP | KEY_DOWN);
+            if (dp) {
+                int sp = ++mv_t > 40 ? 4 : mv_t > 15 ? 2 : 1;
+                if (dp & KEY_LEFT) stk_x -= sp;
+                if (dp & KEY_RIGHT) stk_x += sp;
+                if (dp & KEY_UP) stk_y -= sp;
+                if (dp & KEY_DOWN) stk_y += sp;
+                if (stk_x < 0) stk_x = 0;
+                if (stk_x > 255) stk_x = 255;
+                if (stk_y < CY) stk_y = CY;
+                if (stk_y > CY + CH - 1) stk_y = CY + CH - 1;
+                dirty = true;
+            } else mv_t = 0;
         } else {
             if (down & KEY_L) { bd_size = bd_size > 1 ? bd_size - 1 : 1; dirty = true; }
             if (down & KEY_R) { bd_size = bd_size < 4 ? bd_size + 1 : 4; dirty = true; }
         }
-        if ((down & KEY_Y) && undo) { u8 t; for (u32 i = 0; i < sizeof(board_px); i++) { t = board_px[i]; board_px[i] = undo[i]; undo[i] = t; } board_changed(); dirty = true; }
+        if ((down & KEY_Y) && !stk && undo) { u8 t; for (u32 i = 0; i < sizeof(board_px); i++) { t = board_px[i]; board_px[i] = undo[i]; undo[i] = t; } board_changed(); dirty = true; }
         if (down & KEY_SELECT) { bd_face ^= 1; dirty = true; }
         if (down & KEY_START) { g_opt.board = !g_opt.board; fe_save(); dirty = true; }
         face = bd_face ? 0 : 64;   // (the top deck is the texture's right half)
-        bool held = false;
         if (hk & KEY_TOUCH) {
             touchPosition tp; touchRead(&tp);
             int x = tp.px, y = tp.py;
@@ -1181,12 +1197,13 @@ bool fe_frame(u32 down, int *event, int *rider, int nriders, const char *const *
                     else if (bd_page * per + slot < ns) bd_stk = bd_page * per + slot;
                 }
                 dirty = true;
-            } else if ((down & KEY_TOUCH) && y >= KY && y < 180 && stk) {          // smaller, bigger, turn left, turn right
-                int b = x / 64;
+            } else if ((down & KEY_TOUCH) && y >= KY && y < 180 && stk) {          // smaller, bigger, turn left, turn right, place
+                int b = x * 5 / 256;
                 if (b == 0 && bd_ssc > 2) bd_ssc--;
                 else if (b == 1 && bd_ssc < 12) bd_ssc++;
                 else if (b == 2) bd_srot = (bd_srot + 23) % 24;
                 else if (b == 3) bd_srot = (bd_srot + 1) % 24;
+                else if (b == 4) place = true;
                 dirty = true;
             } else if (y >= CY && y < CY + CH) {        // the canvas
                 if (down & KEY_TOUCH) { lastx = x; lasty = y; if (!stk && undo) memcpy(undo, board_px, sizeof(board_px)); }
@@ -1204,9 +1221,9 @@ bool fe_frame(u32 down, int *event, int *rider, int nriders, const char *const *
                         }
                     }
                     board_changed(); dirty = true;
-                } else if (stk) {                      // the sticker follows the stylus, and goes down where it is let go
+                } else if (stk) {                      // the stylus moves the sticker (A or PLACE puts it down)
                     if (stk_x != x || stk_y != y) dirty = true;
-                    stk_x = x; stk_y = y; held = true;
+                    stk_x = x; stk_y = y;
                 } else if (bd_tool == T_FILL && (down & KEY_TOUCH)) {    // the whole side in the colour
                     for (int v = 0; v < BOARD_TEX; v++) memset(&board_px[v * BOARD_TEX + face], bd_col, 64);
                     board_changed(); dirty = true;
@@ -1214,13 +1231,10 @@ bool fe_frame(u32 down, int *event, int *rider, int nriders, const char *const *
                 lastx = x; lasty = y;
             }
         } else lastx = -1;
-        if (stk_x >= 0 && !held) {                     // let go: the sticker is placed
-            if (!(hk & KEY_TOUCH) && stk) {
-                if (undo) memcpy(undo, board_px, sizeof(board_px));
-                sticker_xform(bd_stk, stk_x / 2, (stk_y - CY) / 2, bd_ssc, bd_srot, board_px + face, NULL);
-                board_changed();
-            }
-            stk_x = -1; dirty = true;
+        if (place && stk) {                            // the sticker goes down where it is shown
+            if (undo) memcpy(undo, board_px, sizeof(board_px));
+            sticker_xform(bd_stk, stk_x / 2, (stk_y - CY) / 2, bd_ssc, bd_srot, board_px + face, NULL);
+            board_changed(); dirty = true;
         }
         face = bd_face ? 0 : 64;                       // (the side may have just changed)
         if (dirty || (++up_t & 3) == 0) {
@@ -1238,7 +1252,13 @@ bool fe_frame(u32 down, int *event, int *rider, int nriders, const char *const *
                 // the canvas, and the sticker being placed over it
                 for (int sy = 0; sy < CH; sy++) for (int sx = 0; sx < 256; sx++)
                     pxl[(CY + sy) * 256 + sx] = 202 + board_px[(sx / 2) * BOARD_TEX + face + sy / 2];
-                if (stk && stk_x >= 0) sticker_xform(bd_stk, stk_x / 2, (stk_y - CY) / 2, bd_ssc, bd_srot, NULL, pxl + CY * 256);
+                if (stk) {                             // the sticker as it will go down, and a mark at its middle
+                    sticker_xform(bd_stk, stk_x / 2, (stk_y - CY) / 2, bd_ssc, bd_srot, NULL, pxl + CY * 256);
+                    for (int k = -3; k <= 3; k++) {
+                        if (stk_x + k >= 0 && stk_x + k < 256) pxl[stk_y * 256 + stk_x + k] = k & 1 ? 193 : 194;
+                        if (stk_y + k >= CY && stk_y + k < CY + CH) pxl[(stk_y + k) * 256 + stk_x] = k & 1 ? 193 : 194;
+                    }
+                }
                 if (!stk) {
                     for (int c = 0; c < 16; c++) for (int j = 0; j < 18; j++) for (int i = 0; i < 15; i++)
                         pxl[(SY + j) * 256 + c * 16 + i] = (bd_tool == T_PEN && c == bd_col && (j < 2 || j > 15 || i < 2 || i > 12)) ? 193 : 202 + c;
@@ -1258,8 +1278,11 @@ bool fe_frame(u32 down, int *event, int *rider, int nriders, const char *const *
                         if (k == bd_stk) for (int i = 0; i < 31; i++) { pxl[(SY + 18) * 256 + s * 32 + i] = 194; pxl[(SY + 19) * 256 + s * 32 + i] = 194; }
                     }
                     subui_text(7 * 32 + 16, SY + 4, 3, 2, ns > 7 ? ">>" : "", 0);
-                    static const char *const KB[4] = { "SMALLER", "BIGGER", "TURN L", "TURN R" };
-                    for (int b = 0; b < 4; b++) { subui_rect(b * 64 + 1, KY, 62, 11, 3); subui_text(b * 64 + 32, KY + 1, 3, 2, KB[b], 0); }
+                    static const char *const KB[5] = { "SMALLER", "BIGGER", "TURN L", "TURN R", "PLACE" };
+                    for (int b = 0; b < 5; b++) {
+                        int x0 = b * 256 / 5, x1 = (b + 1) * 256 / 5;
+                        subui_rect(x0 + 1, KY, x1 - x0 - 2, 11, b == 4 ? 1 : 3); subui_text((x0 + x1) / 2, KY + 1, 3, 2, KB[b], 0);
+                    }
                 }
                 subui_show();
                 dirty = false;
@@ -1274,13 +1297,14 @@ bool fe_frame(u32 down, int *event, int *rider, int nriders, const char *const *
             for (int f = 0; f < 2; f++) {                 // (f 0: the top deck, the texture's right half)
                 int x = 40 + f * 96, y = 48;
                 if (f == bd_face) hud_rect(x - 3, y - 3, 70, 134, RGB15(31, 19, 3), 1);
-                hud_image(tx, x, y, 64, 128, f ? 0 : 64, 0, 64, 128, C_WHITE, 2);
+                // (the face's columns right to left: the canvas turned a quarter clockwise - drawn left to right they
+                // came out mirrored)
+                hud_image(tx, x, y, 64, 128, f ? 64 : 128, 0, -64, 128, C_WHITE, 2);
                 hud_font(3); hud_text(x + 32, y + 131, 2, f ? "BASE" : "TOP", f == bd_face ? C_WHITE : RGB15(18, 18, 20));
             }
             hud_font(3);
             char b[64];
-            if (stk) snprintf(b, sizeof(b), "Custom board: %s   Sticker x%d.%02d  %d deg  (L/R, X/A)", g_opt.board ? L("On") : L("Off"),
-                              bd_ssc / 4, bd_ssc % 4 * 25, bd_srot * 15);
+            if (stk) snprintf(b, sizeof(b), "x%d.%02d  %d deg   D-pad move  L/R size  X/Y turn  A place", bd_ssc / 4, bd_ssc % 4 * 25, bd_srot * 15);
             else snprintf(b, sizeof(b), "Custom board: %s    Size %d (L/R)   Y undo   B save", g_opt.board ? L("On") : L("Off"), bd_size);
             hud_text(128, 30, 2, b, g_opt.board ? RGB15(16, 31, 14) : RGB15(24, 24, 26));
             hud_font(0);

@@ -13,7 +13,7 @@ KEY = (255, 0, 255)
 
 
 def keyed(im, key=KEY, black=0):
-    """RGBA from an RGB image: the magenta key clear (and pixels darker than `black`, for the glint and the skull)"""
+    """RGBA from an RGB image: the magenta key clear (and pixels darker than `black`, for the glint)"""
     im = im.convert('RGB'); out = Image.new('RGBA', im.size)
     px = [(r, g, b, 0 if ((r > 190 and g < 80 and b > 190) or (black and r + g + b < black)) else 255) for r, g, b in list(im.getdata())]
     out.putdata(px)
@@ -31,7 +31,6 @@ def main(bm, out):
     L = lambda n: Image.open(os.path.join(bm, n + '.bmp'))
     S = []
     S.append(fit(keyed(L('logobig')), 48, 32))                          # the SSX 3 logo
-    S.append(fit(keyed(L('logo'), black=40), 40, 40))               # the skull
     fg = keyed(L('FreshGear'))
     for k in range(3): S.append(fit(fg.crop((0, k * 48, 48, k * 48 + 48)), 24, 24))   # $, board, jacket
     S.append(fit(L('flakebig').convert('RGBA'), 24, 24))              # snowflake
