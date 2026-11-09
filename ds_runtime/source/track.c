@@ -345,6 +345,12 @@ ITCM_CODE static int lod_space(const Track *t, int seg)
         int cx = (g->bbmin[0] + g->bbmax[0]) / 2 - x, cz = (g->bbmin[2] + g->bbmax[2]) / 2 - z;
         bool ahead = (fx - x) * t->view_dir[0] + (fz - z) * t->view_dir[1] > 0 ||
                      cx * t->view_dir[0] + cz * t->view_dir[1] > 0;
+        // port: or ahead of where the camera looks. The rider's travel alone left out ground on screen whenever the
+        // camera looked elsewhere: off R&B's billboard rail at ~36 % the rider ran down to the right while the
+        // camera faced the left mountainside, and its upper slopes (segments 10000+ along the line, 4000 in
+        // space) were missing - holes against the sky. (What is off screen is still culled by the view test.)
+        if (!ahead && t->cam_ok)
+            ahead = (fx - x) * t->cam_f[0] + (fz - z) * t->cam_f[1] > 0 || cx * t->cam_f[0] + cz * t->cam_f[1] > 0;
         if (!ahead) return -1;
     }
     // full detail for boxes the rider is in or right beside (the simplified ground stands proud of the collision
@@ -547,7 +553,7 @@ void track_set_cam(Track *t, float x, float z, float fx, float fz, int reach)
 #ifndef NOCULL
 #define NOCULL 0
 #endif
-ITCM_CODE static bool box_out_of_view(const Track *t, const s32 org[3], int x0, int z0, int x1, int z1, int ytop, bool far)
+ITCM_CODE static bool box_out_of_view(const Track *t, const s32 org[3], int x0, int z0, int x1, int z1, int ybot, int ytop, bool far)
 {
     if (!t->cam_ok || NOCULL) return false;
     int fx = t->cam_f[0], fz = t->cam_f[1];
@@ -555,8 +561,12 @@ ITCM_CODE static bool box_out_of_view(const Track *t, const s32 org[3], int x0, 
     // test allows (from high in the air, ground beside / under the camera was culled: holes near the rider). A point
     // h below the eye is in front of it while fw > -h tan(pitch), and inside the side planes only while its side
     // distance < tan(32.8) (fw cos + h sin) <= fw + h tan(pitch): the margin grows by h tan(pitch).
-    s32 above = t->cam_y - (org[1] + ytop); if (above < 0) above = 0;
-    s32 m = 200 + ((above * t->cam_tanp) >> 10);
+    // The box's lowest point counts (its top did: a tall tile of mountainside reaching above the camera got no
+    // margin for its lower part, and was culled at the screen's edge - R&B ~38 %, holes in the slopes beside the
+    // rider), and the same above the camera when it looks up (tan of the upward tilt)
+    s32 above = t->cam_y - (org[1] + ybot); if (above < 0) above = 0;
+    s32 high = org[1] + ytop - t->cam_y; if (high < 0) high = 0;
+    s32 m = 200 + ((above * t->cam_tanp) >> 10) + ((high * t->cam_tanu) >> 10);
     int behind = 0, left = 0, right = 0, past = 0;
     for (int c = 0; c < 4; c++) {
         s32 x = org[0] + ((c & 1) ? x1 : x0) - t->cam[0];
@@ -571,12 +581,13 @@ ITCM_CODE static bool box_out_of_view(const Track *t, const s32 org[3], int x0, 
     return behind == 4 || right == 4 || left == 4 || past == 4;
 }
 // the whole box inside the view's x / z wedge and short of the fog's end: none of its tiles needs testing
-ITCM_CODE static bool box_inside(const Track *t, const s32 org[3], int x0, int z0, int x1, int z1, int ytop)
+ITCM_CODE static bool box_inside(const Track *t, const s32 org[3], int x0, int z0, int x1, int z1, int ybot, int ytop)
 {
     if (!t->cam_ok || NOCULL) return true;
     int fx = t->cam_f[0], fz = t->cam_f[1];
-    s32 above = t->cam_y - (org[1] + ytop); if (above < 0) above = 0;
-    s32 m = 200 + ((above * t->cam_tanp) >> 10);
+    s32 above = t->cam_y - (org[1] + ybot); if (above < 0) above = 0;
+    s32 high = org[1] + ytop - t->cam_y; if (high < 0) high = 0;
+    s32 m = 200 + ((above * t->cam_tanp) >> 10) + ((high * t->cam_tanu) >> 10);
     for (int c = 0; c < 4; c++) {
         s32 x = org[0] + ((c & 1) ? x1 : x0) - t->cam[0];
         s32 z = org[2] + ((c & 2) ? z1 : z0) - t->cam[1];
@@ -588,7 +599,7 @@ ITCM_CODE static bool box_inside(const Track *t, const s32 org[3], int x0, int z
 ITCM_CODE static bool seg_out_of_view(const Track *t, int i)
 {
     const SegRec *g = &t->segs[i];
-    return box_out_of_view(t, g->origin, g->bbmin[0], g->bbmin[2], g->bbmax[0], g->bbmax[2], g->bbmax[1], false);
+    return box_out_of_view(t, g->origin, g->bbmin[0], g->bbmin[2], g->bbmax[0], g->bbmax[2], g->bbmin[1], g->bbmax[1], false);
 }
 
 // port: the far tiles go last. Polygon / vertex RAM (2048 / 6144) keeps what arrives first and drops the rest, so
@@ -693,7 +704,7 @@ ITCM_CODE int track_draw(Track *t, float s, int bias)
         const ListRec *lists = (const ListRec *)(base + L->off_lists);
         bool pushed = false;
         // (a segment wholly in view: its tiles are too - no test each; the far pass still sorts them by distance)
-        bool all_in = box_inside(t, g->origin, g->bbmin[0], g->bbmin[2], g->bbmax[0], g->bbmax[2], g->bbmax[1]);
+        bool all_in = box_inside(t, g->origin, g->bbmin[0], g->bbmin[2], g->bbmax[0], g->bbmax[2], g->bbmin[1], g->bbmax[1]);
         if (all_in && t->defer_far) {
             s32 sfw = -(1 << 30);                          // the box's farthest corner
             for (int c = 0; c < 4; c++) {
@@ -710,7 +721,7 @@ ITCM_CODE int track_draw(Track *t, float s, int bias)
         }
         for (int j = 0; j < L->nlists; j++) {
             const ListRec *lr = &lists[j];                 // v5: a tile of one material - left out when not in view
-            if (!all_in && box_out_of_view(t, g->origin, lr->bbmin[0], lr->bbmin[2], lr->bbmax[0], lr->bbmax[2], lr->bbmax[1], true)) continue;
+            if (!all_in && box_out_of_view(t, g->origin, lr->bbmin[0], lr->bbmin[2], lr->bbmax[0], lr->bbmax[2], lr->bbmin[1], lr->bbmax[1], true)) continue;
             if (t->defer_far && t->cam_ok && nfar < NFAR) {
                 s32 fw = tile_fw(t, g->origin, lr->bbmin[0], lr->bbmin[2], lr->bbmax[0], lr->bbmax[2]);
                 if (fw > far_d) {                          // for the far pass

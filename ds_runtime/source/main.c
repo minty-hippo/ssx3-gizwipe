@@ -1238,6 +1238,9 @@ static void cam_step(const Phys *p, int setting, bool pipe)
     if (h2 <= 0x10000) { float a = p->facing * (6.2831853f / 2048.0f); dir[0] = sinf(a); dir[1] = 0; dir[2] = cosf(a); }
     else {
         if (vy * vy > h2 * 0.75f) vy = (vy < 0 ? -1 : 1) * sqrtf(h2 * 0.75f);
+        // port: grinding, the camera takes little of the rail's slope (pitch within ~17 degrees, not ~41): along a
+        // rail going up over R&B's billboards and down again it rode 30..250 units over the rider and back
+        if (p->rail_state && vy * vy > h2 * 0.09f) vy = (vy < 0 ? -1 : 1) * sqrtf(h2 * 0.09f);
         float l = sqrtf(h2 + vy * vy); dir[0] = vx / l; dir[1] = vy / l; dir[2] = vz / l;
     }
     memcpy(camT0, camT, sizeof(camT)); memcpy(camC0, camC, sizeof(camC));
@@ -1250,10 +1253,18 @@ static void cam_step(const Phys *p, int setting, bool pipe)
         return;
     }
     for (int k = 0; k < 3; k++) camT[k] = (camT[k] * 3 + T[k]) / 4;
+    // port: grinding, the target's height is averaged over ~8 steps: rails such as R&B's over the billboard tops
+    // are staircases (500 units flat, 360 down steeply, again), and the camera stepped up and down with them
+    static float grindY;
+    if (p->rail_state == 2) { grindY = (grindY * 7 + T[1]) / 8; camT[1] = grindY; } else grindY = camT[1];
     camD = d < camD ? (camD * 15 + d) / 16 : (camD * 7 + d) / 8;
     float C[3]; for (int k = 0; k < 3; k++) C[k] = camT[k] - dir[k] * camD;
     if (p->air) C[1] += 96;
-    camC[0] = (camC[0] * 7 + C[0]) / 8; camC[1] = (camC[1] * 11 + C[1]) / 12; camC[2] = (camC[2] * 7 + C[2]) / 8;
+    camC[0] = (camC[0] * 7 + C[0]) / 8; camC[2] = (camC[2] * 7 + C[2]) / 8;
+    // port: grinding, the height follows 3x faster: a rail drops far more steeply than the slope (R&B's billboard
+    // rail: 11-27 units a frame), and at 1/12 a step the camera hung 150+ units over the rider, then sank back
+    // along the flat - up and down along the rail
+    if (p->rail_state == 2) camC[1] = (camC[1] * 3 + C[1]) / 4; else camC[1] = (camC[1] * 11 + C[1]) / 12;   // (C from the averaged target)
     float e[3] = { camT[0] - camC[0], camT[1] - camC[1], camT[2] - camC[2] }, l = sqrtf(e[0] * e[0] + e[1] * e[1] + e[2] * e[2]);
     if (l > 1) for (int k = 0; k < 3; k++) camC[k] = camT[k] - e[k] / l * camD;
     // 0x75808 (0x6829c against the course): a ray from the target out to the camera; if the course is in the way
@@ -1264,9 +1275,13 @@ static void cam_step(const Phys *p, int setting, bool pipe)
     // the step before. Pulling camC itself in made the next ray miss, the camera eased out, the ray hit again: along
     // rails, fences and the city's walls the camera jumped 80-180 units back and forth (judder).
     static float occ_d;
-    if (cam_occ_reset) { occ_d = 0; cam_occ_reset = false; }
+    static int occ_n;                                  // (steps in a row something nearer has been in the way)
+    if (cam_occ_reset) { occ_d = 0; occ_n = 0; cam_occ_reset = false; }
     memcpy(camV0, camV, sizeof(camV)); memcpy(camV, camC, sizeof(camC));
-    if (p->trk && l > 1) {
+    // (grinding: no occlusion pull - the boards and posts along a rail sweep between rider and camera; pulled in
+    // and let out again, the camera lurched at every billboard on R&B's rail)
+    if (p->rail_state == 2) { occ_d = 0; occ_n = 0; }
+    else if (p->trk && l > 1) {
         s32 a[3], b[3], h[3], n[3]; int sf = 0;
         float want = 1e9f;
         for (int k = 0; k < 3; k++) { a[k] = (s32)camT[k]; b[k] = (s32)(camC[k] - e[k] / l * 24); }
@@ -1275,8 +1290,13 @@ static void cam_step(const Phys *p, int setting, bool pipe)
             hd = sqrtf(hd) - 24; if (hd < 16) hd = 16;
             want = hd;
         }
+        // port: a new, nearer obstruction pulls the camera in once it has stayed for 2 steps (4 grinding): posts,
+        // billboards and boards sweeping between the rider and the camera for a moment were snapping it in and
+        // letting it ease out again - R&B's billboard rail at ~35 % made the camera jump up and down. Tunnels and
+        // walls stay in the way and still bring it in (a step or two later)
         if (occ_d <= 0) occ_d = want < l ? want : l;
-        if (want < occ_d) occ_d = want;
+        occ_n = want < occ_d - 8 ? occ_n + 1 : 0;
+        if (want < occ_d) { if (occ_n >= (p->rail_state ? 4 : 2)) occ_d = want; }
         else { float to = want < l ? want : l; occ_d += (to - occ_d) / 5; }
         if (occ_d < l) for (int k = 0; k < 3; k++) camV[k] = camT[k] - e[k] / l * occ_d;
     }
@@ -1801,8 +1821,11 @@ int main(int argc, char **argv)
                     if (race_steps == TEST_FINISH) ph.finished = true;   // test builds: finish early
 #endif
 #ifdef TEST_GRIND
-                    if (race_steps == 40 && trk.nrails) {                   // test: dropped onto the first rail, moving along it
-                        const TrackRail *r = &trk.rails[0]; int sg = r->n > 2 ? 1 : 0;
+#ifndef TEST_GRIND_RAIL
+#define TEST_GRIND_RAIL 0
+#endif
+                    if (race_steps == 40 && trk.nrails > TEST_GRIND_RAIL) {  // test: dropped onto a rail (TEST_GRIND_RAIL), moving along it
+                        const TrackRail *r = &trk.rails[TEST_GRIND_RAIL]; int sg = r->n > 2 ? 1 : 0;
                         for (int j = 0; j < 3; j++) ph.pos[j] = (r->pts[sg][j] + (j == 1 ? 40 : 0)) << 8;
                         for (int j = 0; j < 3; j++) ph.vel[j] = r->dir[sg][j] * 3 / 2;
                         ph.vel[1] = -200; ph.air = true; ph.jstate = 4;
@@ -1956,7 +1979,8 @@ int main(int argc, char **argv)
             s32 e[3] = { (s32)rp[0], (s32)rp[1] + 50, (s32)rp[2] }, q[3] = { (s32)cam_pos[0], (s32)cam_pos[1], (s32)cam_pos[2] }, h[3], n[3]; int sf;
             float want = 1;
             float qx = cam_pos[0] - e[0], qy = cam_pos[1] - e[1], qz = cam_pos[2] - e[2], ql = sqrtf(qx * qx + qy * qy + qz * qz);
-            if (ql > 1 && track_ray(&trk, e, q, h, n, &sf)) {
+            bool grinding = replay ? rpg.ph.rail_state == 2 : ph.rail_state == 2;   // (grinding: not checked - see cam_step)
+            if (ql > 1 && !grinding && track_ray(&trk, e, q, h, n, &sf)) {
                 float dx = h[0] - e[0], dy = h[1] - e[1], dz = h[2] - e[2], l = sqrtf(dx * dx + dy * dy + dz * dz);
                 want = l > 30 ? (l - 25) / ql : 0;
                 if (want > 1) want = 1;
@@ -2065,6 +2089,8 @@ int main(int argc, char **argv)
             float vx = tg[0] - cam_pos[0], vy = tg[1] - cam_pos[1], vz = tg[2] - cam_pos[2], hl = sqrtf(vx * vx + vz * vz);
             float tp = vy < 0 ? -vy / (hl > 1 ? hl : 1) : 0; if (tp > 4) tp = 4;
             trk.cam_tanp = (s32)(tp * 1024) + 64;               // (+ a little: the 25.8 degree half-height of the view)
+            float tu = vy > 0 ? vy / (hl > 1 ? hl : 1) : 0; if (tu > 4) tu = 4;
+            trk.cam_tanu = (s32)(tu * 1024) + 64;               // (and looking up: boxes above the camera)
         }
         track_set_cam(&trk, cam_pos[0], cam_pos[2], fx, fz, fog_end_units + 800);   // (+800: the fog is by depth, terrain high above the camera reads nearer)
         // the far tiles to the end of the frame only when the last one came near the hardware's limits (sent at the

@@ -1179,5 +1179,24 @@ screen, away from the large empty areas, every 20 frames over two minutes of R&B
     a fraction apart). The collision keeps its own local vertices.
 * R&B 1384 polygons at most, Metro City 1874, Snow Jam 1902; 60 fps.
 
+## Stage 84: R&B's billboard rail camera; holes in the slopes beside the rider
+* The rail over R&B's billboards (~34-36 %, rail 47: a staircase - 500 units flat over each board top, 360 down
+  steeply, four times) made the camera jump: on it the camera rode 30..280 units over the rider, and every board
+  sweeping between rider and camera snapped it in (77 units in a frame) before it eased out. Grinding now: the
+  camera takes little of the rail's slope (pitch within ~17 degrees), its target's height is averaged over ~8 steps,
+  its height follows 3x faster, and neither the chase camera's occlusion ray nor the keep-in-sight ray pulls it in
+  (a camera passing a board for a moment beats one lurching). Off the rails a new, nearer obstruction must stay
+  for 2 steps before the camera comes in (posts and boards flicking past were snapping it). Measured on that rail
+  (TEST_GRIND with TEST_GRIND_RAIL=47): frame-to-frame camera jolts over 4 units 19 -> 3, the largest 77 -> 11.
+* Holes in the slopes at the screen's edges (R&B ~38 %, the mountainside beside the rider): the per-tile view test
+  widens its side margin for what lies below a camera looking down, but measured that from the box's top - a tall
+  tile of mountainside reaching above the camera got no margin for its lower part and was culled while still on
+  screen. It now measures from the box's bottom, and widens the same way above a camera looking up. Measured with
+  the magenta backdrop and rays cast through the empty pixels against the course (hits within 3000 units = a hole):
+  off the billboard rail, holes at the screen's edges 134 -> 35 samples. Polygons unchanged (R&B 1388, Metro City
+  1874, Snow Jam 1901 at most; 60 fps).
+* The space LOD's "ahead" test also takes what is ahead of the camera (not only of the rider's travel).
+* Test builds: TEST_GRIND_RAIL=<n> (the rail TEST_GRIND drops the rider onto).
+
 ## Not done yet / next
 * Download Play (see stage 41).
