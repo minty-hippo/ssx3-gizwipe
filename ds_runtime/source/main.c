@@ -540,6 +540,7 @@ static void set_event_fog(int ev)
     int r = (c >> 19) & 31, g = (c >> 11) & 31, b = (c >> 3) & 31;
     glFogColor(r, g, b, 31);
     glClearColor(r, g, b, 31);
+    sky_set_fog(RGB15(r, g, b));
     // port: the races with the hardware's edge antialiasing. Beyond softening the outlines it makes every opaque
     // polygon fill its edge pixels: without it the rasteriser leaves out the edge pixels of some x-major edges, so
     // two polygons sharing a nearly horizontal edge could both skip a pixel row - hairline cracks in the course
@@ -1828,6 +1829,11 @@ int main(int argc, char **argv)
                     }
 #ifdef TEST_FINISH
                     if (race_steps == TEST_FINISH) ph.finished = true;   // test builds: finish early
+#endif
+#ifdef TEST_LAUNCH
+                    {   // test: a big launch once the rider passes TEST_LAUNCH along the line (a high jump's camera)
+                        static bool done; if (!done && race_steps >= TEST_LAUNCH && !ph.air) { done = true; ph.vel[1] += TEST_LAUNCH_V; ph.air = true; }
+                    }
 #endif
 #ifdef TEST_GRIND
 #ifndef TEST_GRIND_RAIL

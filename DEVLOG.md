@@ -1233,5 +1233,21 @@ screen, away from the large empty areas, every 20 frames over two minutes of R&B
   grinding (state 2). On that rail (TEST_GRIND_RAIL=61) the rider now sits at rows ~110-140 of the screen.
 * TEST_GRIND drops the rider onto a rail's high end, heading downhill.
 
+## Stage 88: R&B's white wedges with the camera high (~38 %) - the sky inside the far plane
+* The cause was the sky, not the course. The panorama cylinder was drawn 154 DS units out and 252 tall, so its
+  corners lay up to 295 units away, past the 160 far plane. When the camera looked down from high over the rider
+  (off the gully's bumps at ~38 %), the cylinder's quads crossed the far plane. The DS hides any polygon crossing
+  the far plane (polygon attribute bit 12 clear), so whole sky quads went missing on hardware. melonDS clipped them
+  instead, which left smaller gaps. Either way the clear colour showed between the walls' tops and the trees, in
+  sharp-edged wedges with the trees drawn in front.
+* The sky is now drawn at half the size (radius 77 DS units, ~20000 game units, still about 3x past the fog's end),
+  so every vertex lies inside the far plane.
+* The cylinder used to end 6 degrees below the horizon, so a high camera could also see under its bottom edge,
+  where the course isn't modelled past the walls' tops. A skirt now continues below it to straight down: it fades
+  from the panorama's bottom row, colour-matched column by column so there is no seam, into the fog colour.
+* Testing: TEST_LAUNCH=<race step> with TEST_LAUNCH_V=<velocity> throws the rider upward once it is on the ground
+  after that step. With TEST_BACKDROP (magenta clear colour) and a launch at R&B ~37-38 %, the wedges showed in
+  every run (up to ~8000 magenta pixels a frame). After the fix there were none, from 6300 to 7000 frames.
+
 ## Not done yet / next
 * Download Play (see stage 41).
