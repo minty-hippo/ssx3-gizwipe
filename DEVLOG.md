@@ -1122,5 +1122,9 @@ what the riders look like.
   256 x 256 and cropped, so the logo came out a quarter too narrow. It is now drawn over the whole 256 x 192
   screen, the same 4:3 as the original.
 
+## Stage 81: the main menu's dashed line
+* The main menu's horizontal dashed line now sits level with the title rule under the logo; it ran through
+  the first item ([...]).
+
 ## Not done yet / next
 * Download Play (see stage 41).

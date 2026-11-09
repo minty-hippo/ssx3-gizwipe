@@ -267,6 +267,7 @@ static void draw_flakes(void)
 // the marching dashed lines (0x79e90 / 0x79fd4: 4 lit pixels in 8, moving one pixel every 3 frames) that slide to
 // each screen's place over 10 frames (0x22840)
 static int line_x, line_y, from_x, from_y, to_x, to_y, slide_t = 10;
+#define RULE_Y (SX(48) + 3)     // port: the title rule's height, under the logo (see frame)
 static void lines_to(int x, int y)
 {
     if (x == to_x && y == to_y) return;
@@ -294,7 +295,7 @@ static void frame(const char *title, bool snow)
         int x = SX(0x11) + hud_text_width(title) + 6;
         // port: the rule sits under the logo (the logo's art ends at row 46 of 64, ~y 37 here) - at the
         // original's height (0x1e) it struck through the logo, which the DS's narrower screen pulls over it
-        const int ry = SX(48) + 3;
+        const int ry = RULE_Y;
         Img g = img("grad");
         hud_image(g.tex, x, ry, 35, 2, 0, 0, g.w, g.h, C_WHITE, 2);
         hud_rect(x + 35, ry, 256 - x - 35, 1, C_WHITE, 2);
@@ -462,7 +463,7 @@ bool fe_frame(u32 down, int *event, int *rider, int nriders, const char *const *
             subui_show();
             dirty = false;
         }
-        lines_to(SX(0x84) - 3, SX(0x55) - 4);
+        lines_to(SX(0x84) - 3, RULE_Y);             // port: level with the title rule (it ran through the first item)
         hud_begin();
         frame("Main Menu", true);
         list(SX(0x84), SX(0x55) - 10, SX(0x96), 12, ITEMS, 7, sel_main, true, NULL);   // (the description: bottom screen only)
