@@ -1208,5 +1208,20 @@ screen, away from the large empty areas, every 20 frames over two minutes of R&B
   right). They are now the canvas turned a quarter clockwise (the canvas's left end at the top, its top edge on
   the right), so a design reads the same as where it was drawn.
 
+## Stage 86: the board's shadow flicker; the fog-end cut by depth
+* Hardware photos: the board's shadow flickered, and R&B still had white holes (38 %, from high above; 89 %).
+* Shadow: stage 83's single display origin (every segment's lists from the course's middle, in half units, one
+  matrix) put large coordinates through the geometry engine's 4.12 matrix - on hardware the ground came out
+  several units off where the rider and the shadow (their own matrices) put it, and the shadow fought it. Display
+  lists are segment-local in whole units again (.ssxt v7; every course rebuilt). The cracks that change was for
+  were the rasteriser's, which the edge antialiasing (stage 83) fixed.
+* Tiles wholly past the fog's end are not sent - but "past" was the level distance ahead of the camera, and the
+  fog goes by depth. Looking down from high up, ground far ahead on the level can be much nearer in depth and not
+  yet fogged out: its tiles were left out and showed the clear colour (white bands). The cut now uses each box's
+  depth along the view (level distance x cos(pitch) + height below x sin(pitch), at the box's nearest height).
+  Polygons: R&B 1280, Metro City 1808, Snow Jam 1850 at most; 60 fps.
+* Checked on the wrapping-depth melonDS (the hardware's behaviour): no near-plane wraps on the bot's line or off
+  the billboard rail.
+
 ## Not done yet / next
 * Download Play (see stage 41).

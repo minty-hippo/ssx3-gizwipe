@@ -2091,6 +2091,8 @@ int main(int argc, char **argv)
             trk.cam_tanp = (s32)(tp * 1024) + 64;               // (+ a little: the 25.8 degree half-height of the view)
             float tu = vy > 0 ? vy / (hl > 1 ? hl : 1) : 0; if (tu > 4) tu = 4;
             trk.cam_tanu = (s32)(tu * 1024) + 64;               // (and looking up: boxes above the camera)
+            float pl = sqrtf(hl * hl + vy * vy); if (pl < 1) pl = 1;
+            trk.cam_cosp = (s32)(hl / pl * 1024); trk.cam_sinp = (s32)(-vy / pl * 1024);   // the view's pitch (down +)
         }
         track_set_cam(&trk, cam_pos[0], cam_pos[2], fx, fz, fog_end_units + 800);   // (+800: the fog is by depth, terrain high above the camera reads nearer)
         // the far tiles to the end of the frame only when the last one came near the hardware's limits (sent at the

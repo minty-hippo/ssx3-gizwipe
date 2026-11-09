@@ -72,7 +72,7 @@ typedef struct {
     u32 resident_bytes;
     float length;              // race line length (game units)
     s32 view[3], view_dir[2]; bool has_view;
-    s32 cam[2], cam_f[2]; bool cam_ok, defer_far; s32 reach; s32 cam_y, cam_y_next, cam_tanp, cam_tanu;   // cam_y_next: set before track_set_cam   // reach: beyond it (the fog's end) nothing is sent         // the camera (x, z) and its forward (x 1024): segments outside the view are not sent   // rider position: segments near it are drawn even when the race line says they are far
+    s32 cam[2], cam_f[2]; bool cam_ok, defer_far; s32 reach; s32 cam_y, cam_y_next, cam_tanp, cam_tanu, cam_cosp, cam_sinp;   // cam_y_next: set before track_set_cam   // reach: beyond it (the fog's end) nothing is sent         // the camera (x, z) and its forward (x 1024): segments outside the view are not sent   // rider position: segments near it are drawn even when the race line says they are far
 } Track;
 
 bool track_load(Track *t, const char *path);

@@ -20,7 +20,7 @@ bool track_load(Track *t, const char *path)
     memset(t, 0, sizeof(*t));
     t->f = fopen(path, "rb");
     if (!t->f) { printf("open %s failed\n", path); return false; }
-    if (fread(&t->h, sizeof(SsxtHeader), 1, t->f) != 1 || memcmp(t->h.magic, "SSXT", 4) || t->h.ver != 6) {
+    if (fread(&t->h, sizeof(SsxtHeader), 1, t->f) != 1 || memcmp(t->h.magic, "SSXT", 4) || t->h.ver != 7) {
         printf("bad ssxt header\n"); return false;
     }
     if (t->h.nseg > MAX_SEGS) { printf("too many segs %lu\n", t->h.nseg); return false; }
@@ -573,8 +573,13 @@ ITCM_CODE static bool box_out_of_view(const Track *t, const s32 org[3], int x0, 
         s32 z = org[2] + ((c & 2) ? z1 : z0) - t->cam[1];
         s32 fw = (x * fx + z * fz) >> 10, sd = (x * fz - z * fx) >> 10;    // forward / right of the camera
         if (fw < -m) behind++;
-        if (far && t->reach && fw > t->reach) past++;   // wholly past the fog's end (the fog is by depth, ~ forward
-                                                       // distance): drawn, it is just fog colour
+        // wholly past the fog's end (the fog is by depth): drawn, it is just fog colour. port: by the view's depth,
+        // not the level distance - from high up looking down (R&B 38 %, off a jump) ground far ahead on the level is
+        // much nearer in depth, not yet fogged out, and its culled tiles showed the clear colour (white bands)
+        if (far && t->reach) {
+            s32 h = t->cam_sinp > 0 ? t->cam_y - (org[1] + ytop) : t->cam_y - (org[1] + ybot);
+            if (((fw * t->cam_cosp + h * t->cam_sinp) >> 10) > t->reach) past++;
+        }
         if (sd > fw + m) right++;                        // tan 45 = 1
         if (-sd > fw + m) left++;
     }
@@ -592,7 +597,8 @@ ITCM_CODE static bool box_inside(const Track *t, const s32 org[3], int x0, int z
         s32 x = org[0] + ((c & 1) ? x1 : x0) - t->cam[0];
         s32 z = org[2] + ((c & 2) ? z1 : z0) - t->cam[1];
         s32 fw = (x * fx + z * fz) >> 10, sd = (x * fz - z * fx) >> 10;
-        if (fw < -m || sd > fw + m || -sd > fw + m || (t->reach && fw > t->reach)) return false;
+        s32 h = t->cam_sinp > 0 ? t->cam_y - (org[1] + ytop) : t->cam_y - (org[1] + ybot);
+        if (fw < -m || sd > fw + m || -sd > fw + m || (t->reach && ((fw * t->cam_cosp + h * t->cam_sinp) >> 10) > t->reach)) return false;
     }
     return true;
 }
@@ -654,14 +660,12 @@ ITCM_CODE static int draw_list(Track *t, int i, const ListRec *lr, u8 *base)
 ITCM_CODE static void seg_matrix(const Track *t, const SegRec *g)
 {
     glPushMatrix();
-    // 1 DS unit = 256 game units. v6: every segment's lists are relative to the course's one display origin, in
-    // half units (translate origin/256 units = origin*16 in f32, scale VTX_16 by 32): one matrix for all of them, so
-    // a corner two segments share lands on the same point (each through its own origin, the matrices' rounding
-    // differed - hairline cracks along the segment borders)
-    (void)g;
-    s32 o[3]; for (int k = 0; k < 3; k++) o[k] = (t->h.bbmin[k] + t->h.bbmax[k]) >> 1;
-    glTranslatef32(o[0] * 16, o[1] * 16, o[2] * 16);
-    glScalef32(inttof32(32), inttof32(32), inttof32(32));
+    // 1 DS unit = 256 game units: translate origin/256 units (= origin*16 in f32), scale VTX_16 by 16. (v6 drew
+    // all segments from one course origin in half units: the large coordinates put the ground several units off
+    // on hardware through the 4.12 matrix - the board's shadow flickered against it)
+    (void)t;
+    glTranslatef32(g->origin[0] * 16, g->origin[1] * 16, g->origin[2] * 16);
+    glScalef32(inttof32(16), inttof32(16), inttof32(16));
 }
 ITCM_CODE int track_draw_far(Track *t)
 {

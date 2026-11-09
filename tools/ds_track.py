@@ -18,9 +18,9 @@ usage: python3 ds_track.py <track_dir> <out.ssxt> [--seg 4000] [--tex 128]
      LOD choice is by race-line distance from the camera (see budget.py LOD_DIST).
      lists:    nlists x { u16 material (0xFFFF = untextured, colour baked; | 0x4000: always drawn culled), u16 npolys, u32 off_dl, s16 bbmin[3], bbmax[3] } (v5: per material per 1024 x 1024 tile)
      dl:       glCallList-ready: u32 nwords, then packed GX commands
-               (BEGIN_VTXS, COLOR, TEXCOORD, VTX_16, END_VTXS). v6: VTX_16 units = 2 game units relative
-               to the course's display origin (the middle of the header's box, rounded down) -> render every
-               segment with glTranslate(origin) + glScale(32) when 1 DS unit = 256 game units.
+               (BEGIN_VTXS, COLOR, TEXCOORD, VTX_16, END_VTXS). VTX_16 units = 1 game unit relative
+               to the segment origin -> render with glTranslate(origin) + glScale(16) when 1 DS unit =
+               256 game units.
      collision u16 ntri, u16 nvert, i16 xyz[nvert] (local), {u16 a,b,c, u8 mat, u8 surface, i16 normal[3] (0x4000 = 1, cross(b-a, c-a))}[ntri]   (surface = OCT face flags bits 16..19; 0 = no collision)
 """
 import os, sys, struct, argparse
@@ -526,7 +526,6 @@ def convert(track_dir, out_path, seg_len=4000, tex_size=128, lod_ratios=(1.0, 0.
     # vertices on a segment border are locked in the simplified LODs. By position, not index: the same point can be
     # two vertices (a texture seam), and an unlocked copy moved - a crack between a simplified segment and its
     # neighbour, open to the sky (40 such border points on R&B, 206 on Snow Jam)
-    dl_org = (V.min(0) + V.max(0)) // 2                 # (= the header's box's middle: the runtime's course matrix)
     used_pos = {}
     for fi, f in enumerate(m['faces']):
         for a in f['idx']: used_pos.setdefault(tuple(V[a]), set()).add(seg_of[fi])
@@ -541,12 +540,11 @@ def convert(track_dir, out_path, seg_len=4000, tex_size=128, lod_ratios=(1.0, 0.
         blob.align(); chunk_start = len(blob.b)
         P = V[gidx]; lo, hi = P.min(0), P.max(0); origin = (lo + hi) // 2
         Lp = P - origin
-        # the display lists' corners: from the course's one origin (the middle of its box), in half units. Drawn
-        # each segment through its own origin, a corner two segments share came out a fraction of a unit apart
-        # from each (the geometry engine rounds each segment's matrix its own way): hairline cracks along the
-        # segment borders. One matrix for the whole course - the same corner, the same point on screen
-        Dp = np.floor((P - dl_org) / 2 + 0.5).astype(np.int64)
-        assert np.abs(Dp).max() < 32767, f'course too large for one display origin: {np.abs(Dp).max()}'
+        # (v7: the display lists are segment-local again, in whole units. v6 drew every segment from the course's one
+        # origin in half units: the large coordinates through the geometry engine's 4.12 matrix put the ground
+        # several units off on hardware - the board's shadow fought it - and the cracks were the rasteriser's,
+        # fixed by the edge antialiasing)
+        Dp = Lp
         assert np.abs(Lp).max() < 32767, f'segment {sg} too large: {np.abs(Lp).max()}'
         lcol = vcol[gidx]
         faces = [(m['faces'][fi]['idx'], m['faces'][fi]['uv'], m['faces'][fi]['tex']) for fi in fids]
@@ -648,7 +646,7 @@ def convert(track_dir, out_path, seg_len=4000, tex_size=128, lod_ratios=(1.0, 0.
         stats.append([l[0] for l in lods])
         log(f'  seg {sg:3d}: polys per LOD {[l[0] for l in lods]}')
     bb0 = V.min(0); bb1 = V.max(0)
-    hdr = struct.pack('<4s10I2I6i2I', b'SSXT', 6, nseg, len(mat_tex), len(texs), nlod,
+    hdr = struct.pack('<4s10I2I6i2I', b'SSXT', 7, nseg, len(mat_tex), len(texs), nlod,
                       rl_off, mk_off, tex_off, mat_off, seg_off, len(rl), len(mk), *bb0, *bb1, rails_off, len(rails))
     blob.b[:len(hdr)] = hdr
     open(out_path, 'wb').write(bytes(blob.b))
