@@ -1115,5 +1115,12 @@ what the riders look like.
     (the race's is X-mirrored) and the sign of the board's own matrix (a goofy / switch rider is mirrored).
 * Test harness: dsrun.py takes stylus input (DSTOUCH=1, "T<x>/<y>" tokens in bottom-screen pixels).
 
+## Stage 80: the menus' title rule; the title screen's proportions
+* The rule beside each menu screen's title (gradient and double line) is moved below the SSX 3 logo: at the
+  original's height it ran through the logo, which the DS's narrower screen brings over it.
+* Title screen: title.bmp (256 x 256) is stretched over the Gizmondo's 320 x 240 screen; it was drawn here at
+  256 x 256 and cropped, so the logo came out a quarter too narrow. It is now drawn over the whole 256 x 192
+  screen, the same 4:3 as the original.
+
 ## Not done yet / next
 * Download Play (see stage 41).

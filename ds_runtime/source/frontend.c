@@ -292,10 +292,13 @@ static void frame(const char *title, bool snow)
         hud_font(1);
         hud_text(SX(0x11), SX(14), 0, title, C_TITLE);
         int x = SX(0x11) + hud_text_width(title) + 6;
+        // port: the rule sits under the logo (the logo's art ends at row 46 of 64, ~y 37 here) - at the
+        // original's height (0x1e) it struck through the logo, which the DS's narrower screen pulls over it
+        const int ry = SX(48) + 3;
         Img g = img("grad");
-        hud_image(g.tex, x, SX(0x1e), 35, 2, 0, 0, g.w, g.h, C_WHITE, 2);
-        hud_rect(x + 35, SX(0x1e), 256 - x - 35, 1, C_WHITE, 2);
-        hud_rect(x + 35, SX(0x1e) + 1, 256 - x - 35, 1, C_GREY, 2);
+        hud_image(g.tex, x, ry, 35, 2, 0, 0, g.w, g.h, C_WHITE, 2);
+        hud_rect(x + 35, ry, 256 - x - 35, 1, C_WHITE, 2);
+        hud_rect(x + 35, ry + 1, 256 - x - 35, 1, C_GREY, 2);
     }
     Img sh = img("*logobigshad"), lg = img("logobig");
     hud_image(sh.tex, SX(0x13d - 96) + 2, 2, SX(96), SX(64), 0, 0, 96, 64, C_BLACK, 1);
@@ -413,7 +416,9 @@ bool fe_frame(u32 down, int *event, int *rider, int nriders, const char *const *
         hud_begin();
         // title.bmp fades up from black over the first second, the snow falls over it
         int k = frames * 31 / 60; if (k > 31) k = 31;
-        draw("title", 0, -32, 256, 256, 0);
+        // the Gizmondo stretches the 256 x 256 title.bmp over its 320 x 240 screen; the same 4:3 here is the whole
+        // image over 256 x 192 (drawn 256 x 256 and cropped, the logo came out a quarter too narrow)
+        draw("title", 0, 0, 256, 192, 0);
         if (k < 31) hud_rect_a(0, 0, 256, 192, C_BLACK, 31 - k, 3);
         draw_flakes();
         hud_font(2);
