@@ -1155,5 +1155,29 @@ what the riders look like.
 * Test builds: TEST_LOD0 (full detail everywhere), TEST_SKIPMAT=<mask> (course materials left out), TEST_NOFOG,
   TEST_NOCULL, TEST_CAMSKIP=<frames> (the camera log starts later in the race).
 
+## Stage 83: hairline cracks in the course
+Measured with TEST_BACKDROP (the clear colour magenta): small line-shaped magenta pieces in the lower half of the
+screen, away from the large empty areas, every 20 frames over two minutes of R&B and Metro City.
+* The cause near the camera was the rasteriser: with neither antialiasing nor edge marking on, the hardware leaves
+  out the edge pixels of some x-major edges (melonDS's rasteriser follows it: filled edges depend on the slope's
+  sign and major axis), so two polygons sharing a nearly horizontal edge on screen could both skip a pixel row -
+  long hairline cracks across the course a little ahead of the rider, at every LOD. With antialiasing on, every
+  opaque polygon fills its edge pixels. The races now run with the hardware's edge antialiasing (off in the menus):
+  cracks R&B 6.5 -> 4.2 px a frame, Metro City 13.5 -> 6.5, and what is left is outlines against the empty areas,
+  not cracks.
+* Geometry that didn't meet, fixed in the converter as well (every course rebuilt):
+  * stitching: a corner of one piece's open border lying on - or within 12 units of, in the face's plane, beyond
+    its edge, along a border running alongside - another face's open edge is put into that edge (a T-junction, or
+    two pieces that nearly meet); the face is cut into triangles; repeated until none are left (3 passes). 38-1102
+    corners a course;
+  * the simplified LODs no longer move the corners of open borders (they slid along them, off the piece meeting
+    that border);
+  * back-to-back faces are no longer moved apart (stage 82: that pulled their edges off what they stand on); their
+    lists are flagged (material | 0x4000) and always drawn culled, even while the course is drawn both sides;
+  * display lists v6: every segment's corners are relative to the course's one display origin, in half units, and
+    drawn through one matrix (each segment's own origin rounded its matrix its own way: a shared corner could land
+    a fraction apart). The collision keeps its own local vertices.
+* R&B 1384 polygons at most, Metro City 1874, Snow Jam 1902; 60 fps.
+
 ## Not done yet / next
 * Download Play (see stage 41).

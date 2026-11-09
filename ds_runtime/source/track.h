@@ -89,3 +89,4 @@ int  track_draw(Track *t, float s, int bias);                    // returns poly
 bool track_ray(Track *t, const s32 a[3], const s32 b[3], s32 hit[3], s32 n[3], int *surf);
 bool track_ground(const Track *t, float x, float z, float y_max, float *y_out, float n_out[3]);
 void track_tex_check(Track *t);              // test builds: compare the textures in VRAM with what was uploaded
+extern u32 course_fmt, course_fmt_cull;      // the course's polygon format, and culled (lists flagged 0x4000)

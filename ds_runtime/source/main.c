@@ -540,6 +540,11 @@ static void set_event_fog(int ev)
     int r = (c >> 19) & 31, g = (c >> 11) & 31, b = (c >> 3) & 31;
     glFogColor(r, g, b, 31);
     glClearColor(r, g, b, 31);
+    // port: the races with the hardware's edge antialiasing. Beyond softening the outlines it makes every opaque
+    // polygon fill its edge pixels: without it the rasteriser leaves out the edge pixels of some x-major edges, so
+    // two polygons sharing a nearly horizontal edge could both skip a pixel row - hairline cracks in the course
+    // near the camera (the clear colour showing through). Off again in the menus (their pixel art keeps hard edges)
+    glEnable(GL_ANTIALIAS);
 }
 static void set_fog_range(int fog_dist)
 {
@@ -1495,7 +1500,7 @@ int main(int argc, char **argv)
     #define MAP_ON() submap_begin(&trk, EVENTS[cur_event].name, fe_mp() ? "Multiplayer" : fe_shadow() ? XT_32 : fe_career() ? XT_30 : XT_31)
     #define START_EVENT(ev) do { music_pause(vblanks); cur_event = (ev); for (int k = 0; k < NTRACKS; k++) if (!strcmp(TRACKS[k], EVENTS[cur_event].track)) ti = k; \
         load_track_n(&trk, ti); set_event_fog(cur_event); bias = 0; ph.trk = NULL; ev_round = 0; memset(pscore, 0, sizeof(pscore)); RESET_RIDER(); stand_init(ri); paused = false; consoleClear(); print_help(); music_next(vblanks); } while (0)   /* a new course: a random different song */
-    #define QUIT_TO_MENU() do { submap_release(); replay = false; fw_free(&fw); track_free(&trk); sky_free(); setup_fog(); glClearColor(19, 22, 27, 31); memset(&trk, 0, sizeof(trk)); sfx_loop(-1); in_menu = true; \
+    #define QUIT_TO_MENU() do { submap_release(); replay = false; fw_free(&fw); track_free(&trk); sky_free(); setup_fog(); glDisable(GL_ANTIALIAS); glClearColor(19, 22, 27, 31); memset(&trk, 0, sizeof(trk)); sfx_loop(-1); in_menu = true; \
         load_rider_meshes(&rider, ri, hi); fe_enter(FE_EVENT); } while (0)
 
     while (1) {
@@ -2053,7 +2058,8 @@ int main(int argc, char **argv)
         if (both_sides && last_polys > 1750) both_sides = false;
         else if (!both_sides && last_polys < 1100) both_sides = true;
         int course_cull = both_sides && track_cull == POLY_CULL_FRONT ? POLY_CULL_NONE : track_cull;
-        glPolyFmt(POLY_ALPHA(31) | course_cull | POLY_FOG);
+        course_fmt = POLY_ALPHA(31) | course_cull | POLY_FOG; course_fmt_cull = POLY_ALPHA(31) | track_cull | POLY_FOG;
+        glPolyFmt(course_fmt);
         trk.cam_y_next = (s32)cam_pos[1];
         {   // the view's downward tilt (tan, x 1024) for the culling's margin
             float vx = tg[0] - cam_pos[0], vy = tg[1] - cam_pos[1], vz = tg[2] - cam_pos[2], hl = sqrtf(vx * vx + vz * vz);

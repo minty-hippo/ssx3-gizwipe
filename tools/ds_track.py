@@ -16,11 +16,11 @@ usage: python3 ds_track.py <track_dir> <out.ssxt> [--seg 4000] [--tex 128]
                       lists and collision live inside [chunk_off, chunk_off+chunk_size) -> stream per segment) ;
                       nlod x { u16 npolys, u16 nverts, u32 off_lists, u16 nlists, u16 pad } }
      LOD choice is by race-line distance from the camera (see budget.py LOD_DIST).
-     lists:    nlists x { u16 material (0xFFFF = untextured, colour baked), u16 npolys, u32 off_dl, s16 bbmin[3], bbmax[3] } (v5: per material per 1024 x 1024 tile)
+     lists:    nlists x { u16 material (0xFFFF = untextured, colour baked; | 0x4000: always drawn culled), u16 npolys, u32 off_dl, s16 bbmin[3], bbmax[3] } (v5: per material per 1024 x 1024 tile)
      dl:       glCallList-ready: u32 nwords, then packed GX commands
-               (BEGIN_VTXS, COLOR, TEXCOORD, VTX_16, END_VTXS). VTX_16 units = 1 game unit relative
-               to the segment origin -> render with glTranslate(origin) + glScale(16) when 1 DS unit =
-               256 game units.
+               (BEGIN_VTXS, COLOR, TEXCOORD, VTX_16, END_VTXS). v6: VTX_16 units = 2 game units relative
+               to the course's display origin (the middle of the header's box, rounded down) -> render every
+               segment with glTranslate(origin) + glScale(32) when 1 DS unit = 256 game units.
      collision u16 ntri, u16 nvert, i16 xyz[nvert] (local), {u16 a,b,c, u8 mat, u8 surface, i16 normal[3] (0x4000 = 1, cross(b-a, c-a))}[ntri]   (surface = OCT face flags bits 16..19; 0 = no collision)
 """
 import os, sys, struct, argparse
@@ -267,8 +267,8 @@ def fix_coplanar(m, lift=3, log=print):
     pairs). The Gizmondo drew the later one over the earlier; on the DS their depths tie and they flicker. An exact
     copy (same corners) is dropped; otherwise the later face gets its own corners, lifted `lift` units off the
     plane so it is always the one seen. Back-to-back faces (the fence boards, many building panels: the same plane
-    facing the other way) each move `lift` / 2 out along their own normals: the course is drawn unculled when there
-    is room (see main.c), and then each side's own face is the nearer one."""
+    facing the other way) are flagged ('b2b'): their lists are always drawn culled, even when the rest of the course
+    is drawn from both sides (main.c) - moved apart instead, their edges came off what they stand on (cracks)."""
     from itertools import combinations
     V = m['verts'].astype(np.float64); faces = m['faces']
     info = {}
@@ -303,15 +303,17 @@ def fix_coplanar(m, lift=3, log=print):
             elif sorted(map(tuple, pa.astype(int))) == sorted(map(tuple, pb.astype(int))): drop.add(b)
             else: lifted.add(b)
     apart -= drop
+    for b in apart: faces[b]['b2b'] = True
+    for b in lifted: faces[b]['lifted'] = True
     verts = [m['verts']]; vcol = [m['vcolors']]; nv = len(m['verts'])
-    for b in sorted(lifted | apart):
+    for b in sorted(lifted):
         f = faces[b]; n = info[b][0]
-        P = np.round(V[f['idx']] + n * (lift if b in lifted else lift / 2)).astype(m['verts'].dtype)
+        P = np.round(V[f['idx']] + n * lift).astype(m['verts'].dtype)
         verts.append(P); vcol.append(m['vcolors'][f['idx']])
         f['idx'] = list(range(nv, nv + len(P))); nv += len(P)
     m['verts'] = np.concatenate(verts); m['vcolors'] = np.concatenate(vcol)
     m['faces'] = [f for i, f in enumerate(faces) if i not in drop]
-    if drop or lifted or apart: log(f'  overlapping faces: {len(drop)} copies dropped, {len(lifted)} lifted {lift} units, {len(apart)} back-to-back moved apart')
+    if drop or lifted or apart: log(f'  overlapping faces: {len(drop)} copies dropped, {len(lifted)} lifted {lift} units, {len(apart)} back to back (always culled)')
     return m
 
 
@@ -349,6 +351,100 @@ def find_inverted(m, cell=1024):
         if not hit: out.add(i)
     return out
 
+
+def stitch(m, tol=12.0, log=print):
+    """Close the course's hairline cracks: where a face's open edge (no face on the other side of it) passes within
+    `tol` units of a corner of another open edge - a T-junction (a long edge beside a row of shorter ones), or two
+    pieces that nearly meet (R&B's kicker and the slope) - that corner is put into the edge, at its own position, so
+    both sides run through the same points and rasterise without a gap. The faces so split are cut into triangles
+    (a fan from a corner where it makes none degenerate, else from the middle). Texture coordinates and colours
+    along the edge are interpolated; the new corners are vertices of their own."""
+    import collections
+    V = m['verts'].astype(np.float64); F = m['faces']
+    key = [tuple(v) for v in m['verts'].tolist()]
+    vis = [i for i, f in enumerate(F) if not f['flags'] & 1 and not f.get('lifted')]
+    E = set()
+    for i in vis:
+        idx = F[i]['idx']
+        for k in range(len(idx)): E.add((key[idx[k]], key[idx[(k + 1) % len(idx)]]))
+    # (a corner is only taken into an edge its own open border runs alongside, within ~30 degrees: two pieces'
+    # borders a few units apart - most of the cracks across the course - not whatever happens to be near)
+    openv, cell, odir = set(), 64, collections.defaultdict(list)
+    for a, b in E:
+        if (b, a) not in E and a != b:
+            openv.add(a); openv.add(b)
+            dv = np.subtract(b, a, dtype=float); ln = np.linalg.norm(dv)
+            if ln > 0: odir[a].append(dv / ln); odir[b].append(dv / ln)
+    grid = collections.defaultdict(list)
+    for p in openv: grid[(int(p[0] // cell), int(p[1] // cell), int(p[2] // cell))].append(p)
+    newv, newc = [], []; nv = len(V); out = []; nsplit = nins = 0
+    vc = m['vcolors'].astype(np.float64)
+    set_vis = set(vis)
+    for i, f in enumerate(F):
+        if i not in set_vis: out.append(f); continue
+        idx, uv = f['idx'], [np.array(u, float) for u in f['uv']]
+        corners = []                                   # (position, uv, colour, vertex index or -1)
+        ins = 0
+        for k in range(len(idx)):
+            a, b = idx[k], idx[(k + 1) % len(idx)]
+            corners.append((V[a], uv[k], vc[a], a))
+            ka, kb = key[a], key[b]
+            if (kb, ka) in E or ka == kb: continue
+            A, B = V[a], V[b]; d = B - A; L2 = d @ d
+            if L2 < 4: continue
+            fn = np.cross(V[idx[1]] - V[idx[0]], V[idx[2]] - V[idx[0]]); fl = np.linalg.norm(fn)
+            if fl < 1e-9: continue
+            fn /= fl; out_ = np.cross(d, fn); out_ /= max(np.linalg.norm(out_), 1e-9)
+            if out_ @ (V[idx].mean(0) - A) > 0: out_ = -out_          # (pointing away from the face)
+            lo = np.minimum(A, B) - tol; hi = np.maximum(A, B) + tol
+            found = {}
+            for gx in range(int(lo[0] // cell), int(hi[0] // cell) + 1):
+                for gy in range(int(lo[1] // cell), int(hi[1] // cell) + 1):
+                    for gz in range(int(lo[2] // cell), int(hi[2] // cell) + 1):
+                        for p in grid.get((gx, gy, gz), ()):
+                            if p == ka or p == kb or p in found: continue
+                            P = np.array(p, float); t = ((P - A) @ d) / L2
+                            if t <= 0 or t >= 1: continue
+                            if np.linalg.norm(A + d * t - P) > tol: continue
+                            if min(np.linalg.norm(P - A), np.linalg.norm(P - B)) < 1.0: continue
+                            if not any(abs(o @ d) > 0.866 * L2 ** 0.5 for o in odir[p]): continue
+                            if abs(fn @ (P - A)) > 4 or out_ @ (P - A) < -1: continue   # (in the face's plane, beyond its edge)
+                            found[p] = t
+            for p, t in sorted(found.items(), key=lambda x: x[1]):
+                corners.append((np.array(p, float), uv[k] + (uv[(k + 1) % len(idx)] - uv[k]) * t, vc[a] + (vc[b] - vc[a]) * t, -1))
+                ins += 1
+        if not ins: out.append(f); continue
+        nsplit += 1; nins += ins
+        def vid(c):
+            nonlocal nv
+            if c[3] >= 0: return c[3]
+            newv.append(c[0]); newc.append(c[2]); nv += 1; return nv - 1
+        Pn = np.cross(V[idx[1]] - V[idx[0]], V[idx[2]] - V[idx[0]])
+        if len(idx) == 4: Pn = Pn + np.cross(V[idx[2]] - V[idx[0]], V[idx[3]] - V[idx[0]])
+        n_ = len(corners); tri = None
+        orig = [k for k, c in enumerate(corners) if c[3] >= 0]
+        for r in orig:                                 # a fan from an original corner, if none comes out degenerate
+            T = [(r, (r + j) % n_, (r + j + 1) % n_) for j in range(1, n_ - 1)]
+            if all(np.cross(corners[b][0] - corners[a][0], corners[c][0] - corners[a][0]) @ Pn > 1e-3 * (Pn @ Pn) ** 0.5 for a, b, c in T):
+                tri = T; break
+        ids = [vid(c) for c in corners]
+        if tri is None:                                # else from the middle
+            cpos = np.mean([c[0] for c in corners], 0); cuv = np.mean([c[1] for c in corners], 0); ccol = np.mean([c[2] for c in corners], 0)
+            ci = vid((cpos, cuv, ccol, -1))
+            for j in range(n_):
+                g = dict(f); g['idx'] = [ci, ids[j], ids[(j + 1) % n_]]; g['uv'] = [list(cuv), list(corners[j][1]), list(corners[(j + 1) % n_][1])]
+                out.append(g)
+        else:
+            for a, b, c in tri:
+                g = dict(f); g['idx'] = [ids[a], ids[b], ids[c]]; g['uv'] = [list(corners[a][1]), list(corners[b][1]), list(corners[c][1])]
+                out.append(g)
+    if newv:
+        m['verts'] = np.concatenate([m['verts'], np.round(np.array(newv)).astype(m['verts'].dtype)])
+        m['vcolors'] = np.concatenate([m['vcolors'], np.round(np.array(newc)).clip(0, 255).astype(m['vcolors'].dtype)])
+    m['faces'] = out
+    m['_stitched'] = nins
+    return m
+
 class Blob:
     def __init__(self): self.b = bytearray()
     def align(self):
@@ -358,6 +454,11 @@ class Blob:
 
 def convert(track_dir, out_path, seg_len=4000, tex_size=128, lod_ratios=(1.0, 0.55, 0.3, 0.1), log=print):
     m = fix_coplanar(read_oct(os.path.join(track_dir, 'slope.oct')), log=log)
+    tot = 0
+    for _ in range(0 if os.environ.get('DS_NOSTITCH') else 4):   # (a corner put in can make a new near-miss: again until none)
+        m = stitch(m); tot += m['_stitched']
+        if not m['_stitched']: break
+    log(f'  cracks: {tot} corners put into open edges')
     V = m['verts'].astype(np.int64); vcol = m['vcolors']
     # fences: materials whose faces all stand upright (arrowfence, the course edges' chevron boards). The simplified
     # LODs flattened and twisted those thin boards (Metro City's chevrons lay skewed on the ground in the distance);
@@ -425,6 +526,7 @@ def convert(track_dir, out_path, seg_len=4000, tex_size=128, lod_ratios=(1.0, 0.
     # vertices on a segment border are locked in the simplified LODs. By position, not index: the same point can be
     # two vertices (a texture seam), and an unlocked copy moved - a crack between a simplified segment and its
     # neighbour, open to the sky (40 such border points on R&B, 206 on Snow Jam)
+    dl_org = (V.min(0) + V.max(0)) // 2                 # (= the header's box's middle: the runtime's course matrix)
     used_pos = {}
     for fi, f in enumerate(m['faces']):
         for a in f['idx']: used_pos.setdefault(tuple(V[a]), set()).add(seg_of[fi])
@@ -439,19 +541,31 @@ def convert(track_dir, out_path, seg_len=4000, tex_size=128, lod_ratios=(1.0, 0.
         blob.align(); chunk_start = len(blob.b)
         P = V[gidx]; lo, hi = P.min(0), P.max(0); origin = (lo + hi) // 2
         Lp = P - origin
+        # the display lists' corners: from the course's one origin (the middle of its box), in half units. Drawn
+        # each segment through its own origin, a corner two segments share came out a fraction of a unit apart
+        # from each (the geometry engine rounds each segment's matrix its own way): hairline cracks along the
+        # segment borders. One matrix for the whole course - the same corner, the same point on screen
+        Dp = np.floor((P - dl_org) / 2 + 0.5).astype(np.int64)
+        assert np.abs(Dp).max() < 32767, f'course too large for one display origin: {np.abs(Dp).max()}'
         assert np.abs(Lp).max() < 32767, f'segment {sg} too large: {np.abs(Lp).max()}'
         lcol = vcol[gidx]
         faces = [(m['faces'][fi]['idx'], m['faces'][fi]['uv'], m['faces'][fi]['tex']) for fi in fids]
         # (for drawing: the inverted faces reversed; the collision below keeps `faces` as they are)
         dfaces = [(idx[::-1], uv[::-1], mt) if fi in inverted else (idx, uv, mt) for (idx, uv, mt), fi in zip(faces, fids)]
+        # back-to-back faces: their own lists, flagged 0x4000 (always drawn culled: see fix_coplanar)
+        b2b = [bool(m['faces'][fi].get('b2b')) for fi in fids]
+        dfaces = [(idx, uv, mt | 0x4000) if bb else (idx, uv, mt) for (idx, uv, mt), bb in zip(dfaces, b2b)]
         # face flag bit 0: collision only, never drawn (every such face is untextured - Metro City's, The Junction's
         # and Intimidator's invisible walls; they came out as plain white blocks). Kept for the collision grid.
         fvis = [not (m['faces'][fi]['flags'] & 1) for fi in fids]
         locked = np.array([len(used_by[g]) > 1 for g in gidx])
-        for fi in fids:                                   # (the fences' corners: see fence_mat)
-            if m['faces'][fi]['tex'] in fence_mat and not m['faces'][fi]['flags'] & 1:
+        # kept whole in the textured simplified LODs, their corners locked: the fences (see fence_mat) and the
+        # back-to-back faces (simplified, a board's two sides would no longer match)
+        keep = [vis and ((mt & 0x3FFF) in fence_mat or bb) for (idx, uv, mt), vis, bb in zip(dfaces, fvis, b2b)]
+        for fi, kp in zip(fids, keep):
+            if kp:
                 for a in m['faces'][fi]['idx']: locked[remap[a]] = True
-        fence_lf = [([remap[a] for a in idx], uv, mt) for (idx, uv, mt), vis in zip(faces, fvis) if vis and mt in fence_mat]
+        fence_lf = [([remap[a] for a in idx], uv, mt) for (idx, uv, mt), kp in zip(dfaces, keep) if kp]
         tris, tuv, tmat, tsurf, tvis = [], [], [], [], []
         tri_face = []
         for k_, ((idx, uv, mt), fi, vis) in enumerate(zip(faces, fids, fvis)):
@@ -460,7 +574,7 @@ def convert(track_dir, out_path, seg_len=4000, tex_size=128, lod_ratios=(1.0, 0.
                 tri_face.append(k_)
                 tris.append([li[k] for k in tri]); tuv.append([uv[k] for k in tri]); tmat.append(mt)
                 tsurf.append((m['faces'][fi]['flags'] >> 16) & 15); tvis.append(vis)
-        ok_f = [t for t in tmat if t in fence_mat]
+        ok_f = [1 for k in tri_face if keep[k]]
         dtris = [[t[0], t[2], t[1]] if fids[k] in inverted else t for t, k in zip(tris, tri_face)]
         dtuv = [[u[0], u[2], u[1]] if fids[k] in inverted else u for u, k in zip(tuv, tri_face)]
         # untextured far-LOD colour: vertex colour x mean texture colour of incident materials
@@ -477,7 +591,8 @@ def convert(track_dir, out_path, seg_len=4000, tex_size=128, lod_ratios=(1.0, 0.
             if li_ == 0:
                 lf = [([remap[a] for a in idx], uv, mt) for (idx, uv, mt), vis in zip(dfaces, fvis) if vis]
             else:
-                ok = [i for i, t in enumerate(wtris) if len(set(t)) == 3 and tvis[i] and tmat[i] not in fence_mat]
+                ok = [i for i, t in enumerate(wtris) if len(set(t)) == 3 and tvis[i]
+                      and (not keep[tri_face[i]] if not untextured else tmat[i] not in fence_mat)]
                 ct, cm, cu = [wtris[i] for i in ok], [tmat[i] for i in ok], [dtuv[i] for i in ok]
                 wlk = locked.copy()
                 for i in range(len(wlk)): wlk[wmap[i]] |= locked[i]
@@ -489,10 +604,10 @@ def convert(track_dir, out_path, seg_len=4000, tex_size=128, lod_ratios=(1.0, 0.
                 else:
                     wl = locked.copy()
                     for i in range(len(wl)): wl[wmap[i]] |= locked[i]
-                    st, su, sm = simplify(Lp.astype(float), ct, cu, cm, wl, tgt)
+                    st, su, sm = simplify(Lp.astype(float), ct, cu, cm, wl, tgt, lock_open=True)
                     lf = [(t, [tuple(x) for x in u], mt) for t, u, mt in zip(st, su, sm)]
                 lf = requad(Lp.astype(float), lf, check_uv=not untextured)
-                if not untextured: lf += fence_lf             # (the farthest, fogged LOD leaves the thin boards out)
+                if not untextured: lf += fence_lf             # (the farthest, fogged LOD: fences out, the rest simplified)
             lists = []
             # v5: each material's faces split into TILE x TILE (x/z) tiles, each its own list with its box, so the
             # runtime can leave out the tiles outside the view or past the fog (the geometry engine works on all
@@ -506,11 +621,11 @@ def convert(track_dir, out_path, seg_len=4000, tex_size=128, lod_ratios=(1.0, 0.
                 for tk in sorted({tile_of(f) for f in ffm}):
                     ff = [(f[0], f[1]) for f in ffm if tile_of(f) == tk]
                     if mt == 0xFFFF:
-                        dl = build_dl(ff, Lp, flat_col, None)
+                        dl = build_dl(ff, Dp, flat_col, None)
                     else:
-                        ti = mat_tex[mt] if mt < len(mat_tex) else -1
+                        ti = mat_tex[mt & 0x3FFF] if (mt & 0x3FFF) < len(mat_tex) else -1
                         wh = (texs[ti]['w'], texs[ti]['h']) if ti >= 0 else None
-                        dl = build_dl(ff, Lp, lcol, wh)
+                        dl = build_dl(ff, Dp, lcol, wh)
                     Q = Lp[[a for f in ff for a in f[0]]]
                     bb = tuple(int(v) for v in Q.min(0)) + tuple(int(v) for v in Q.max(0))
                     lists.append((mt, len(ff), blob.add(struct.pack(f'<{len(dl)}I', *dl)), bb))
@@ -533,7 +648,7 @@ def convert(track_dir, out_path, seg_len=4000, tex_size=128, lod_ratios=(1.0, 0.
         stats.append([l[0] for l in lods])
         log(f'  seg {sg:3d}: polys per LOD {[l[0] for l in lods]}')
     bb0 = V.min(0); bb1 = V.max(0)
-    hdr = struct.pack('<4s10I2I6i2I', b'SSXT', 5, nseg, len(mat_tex), len(texs), nlod,
+    hdr = struct.pack('<4s10I2I6i2I', b'SSXT', 6, nseg, len(mat_tex), len(texs), nlod,
                       rl_off, mk_off, tex_off, mat_off, seg_off, len(rl), len(mk), *bb0, *bb1, rails_off, len(rails))
     blob.b[:len(hdr)] = hdr
     open(out_path, 'wb').write(bytes(blob.b))

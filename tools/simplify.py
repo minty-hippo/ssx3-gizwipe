@@ -25,7 +25,7 @@ def _affine_uv(P, UV):
         return UV[0] + a * du1 + b * du2
     return f
 
-def simplify(V, tris, uvs, mats, locked, target, seam_cos=-0.94):
+def simplify(V, tris, uvs, mats, locked, target, seam_cos=-0.94, lock_open=False):
     """V (n,3) float; tris list of [a,b,c]; uvs list of 3x2 arrays; mats list; locked bool array.
     Returns (tris, uvs, mats) with about `target` triangles."""
     V = np.asarray(V, float)
@@ -53,6 +53,9 @@ def simplify(V, tris, uvs, mats, locked, target, seam_cos=-0.94):
         if len(fs) != 2 or mats[fs[0]] != mats[fs[1]]:
             seam_edges.add(e); seam_nb[e[0]].append(e[1]); seam_nb[e[1]].append(e[0])
     seam_v = np.array([len(x) > 0 for x in seam_nb])
+    if lock_open:   # open edges (a piece's border, where another piece may meet it): never moved - slid along its
+        for e, fs in edge_faces.items():               # own border, a corner left the other piece's (a crack)
+            if len(fs) == 1: hard[e[0]] = hard[e[1]] = True
     def can_move(u, v):
         if hard[v]: return False
         if not seam_v[v] or seam_cos > 1: return True   # seam_cos > 1: free mode (far LOD, hidden in fog)

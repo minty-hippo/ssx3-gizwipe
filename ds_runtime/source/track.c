@@ -20,7 +20,7 @@ bool track_load(Track *t, const char *path)
     memset(t, 0, sizeof(*t));
     t->f = fopen(path, "rb");
     if (!t->f) { printf("open %s failed\n", path); return false; }
-    if (fread(&t->h, sizeof(SsxtHeader), 1, t->f) != 1 || memcmp(t->h.magic, "SSXT", 4) || t->h.ver != 5) {
+    if (fread(&t->h, sizeof(SsxtHeader), 1, t->f) != 1 || memcmp(t->h.magic, "SSXT", 4) || t->h.ver != 6) {
         printf("bad ssxt header\n"); return false;
     }
     if (t->h.nseg > MAX_SEGS) { printf("too many segs %lu\n", t->h.nseg); return false; }
@@ -609,12 +609,18 @@ ITCM_CODE static s32 tile_fw(const Track *t, const s32 org[3], int x0, int z0, i
     }
     return m;
 }
+// the course's polygon format as main sets it, and the same culled: lists of back-to-back faces (material | 0x4000)
+// are always drawn culled - unculled, a board's two sides would fight in the depth buffer
+u32 course_fmt, course_fmt_cull;
 ITCM_CODE static int draw_list(Track *t, int i, const ListRec *lr, u8 *base)
 {
     int m = lr->material;
+    bool cull_own = m != 0xFFFF && (m & 0x4000) && course_fmt != course_fmt_cull;
+    if (m != 0xFFFF) m &= 0x3FFF;
 #ifdef TEST_SKIPMAT
-    if (((u32)(TEST_SKIPMAT) >> (m == 0xFFFF ? 16 : m)) & 1) return 0;
+    if (((u32)(TEST_SKIPMAT) >> (m == 0xFFFF ? 16 : m & 15)) & 1) return 0;
 #endif
+    if (cull_own) glPolyFmt(course_fmt_cull);
 #ifdef TEST_NOTEX
     if (1) glBindTexture(0, 0); else
 #endif
@@ -630,15 +636,21 @@ ITCM_CODE static int draw_list(Track *t, int i, const ListRec *lr, u8 *base)
 #else
     glCallList(base + lr->off_dl);
 #endif
+    if (cull_own) glPolyFmt(course_fmt);
     (void)i;
     return lr->npolys;
 }
-ITCM_CODE static void seg_matrix(const SegRec *g)
+ITCM_CODE static void seg_matrix(const Track *t, const SegRec *g)
 {
     glPushMatrix();
-    // 1 DS unit = 256 game units: translate origin/256 units (= origin*16 in f32), scale VTX_16 by 16
-    glTranslatef32(g->origin[0] * 16, g->origin[1] * 16, g->origin[2] * 16);
-    glScalef32(inttof32(16), inttof32(16), inttof32(16));
+    // 1 DS unit = 256 game units. v6: every segment's lists are relative to the course's one display origin, in
+    // half units (translate origin/256 units = origin*16 in f32, scale VTX_16 by 32): one matrix for all of them, so
+    // a corner two segments share lands on the same point (each through its own origin, the matrices' rounding
+    // differed - hairline cracks along the segment borders)
+    (void)g;
+    s32 o[3]; for (int k = 0; k < 3; k++) o[k] = (t->h.bbmin[k] + t->h.bbmax[k]) >> 1;
+    glTranslatef32(o[0] * 16, o[1] * 16, o[2] * 16);
+    glScalef32(inttof32(32), inttof32(32), inttof32(32));
 }
 ITCM_CODE int track_draw_far(Track *t)
 {
@@ -655,7 +667,7 @@ ITCM_CODE int track_draw_far(Track *t)
         const SegRec *g = &t->segs[i];
         u8 *base = t->chunk[i] - g->chunk_off;
         const ListRec *lists = (const ListRec *)(base + g->lod[far_q[k].lod].off_lists);
-        if (i != cur) { if (cur >= 0) glPopMatrix(1); seg_matrix(g); cur = i; }
+        if (i != cur) { if (cur >= 0) glPopMatrix(1); seg_matrix(t, g); cur = i; }
         polys += draw_list(t, i, &lists[far_q[k].list], base);
     }
     if (cur >= 0) glPopMatrix(1);
@@ -689,7 +701,7 @@ ITCM_CODE int track_draw(Track *t, float s, int bias)
                 s32 fw = (x * t->cam_f[0] + z * t->cam_f[1]) >> 10; if (fw > sfw) sfw = fw;
             }
             if (sfw <= far_d) {                            // and none of it beyond the far pass's line: tiles as they come
-                seg_matrix(g);
+                seg_matrix(t, g);
                 for (int j = 0; j < L->nlists; j++) polys += draw_list(t, i, &lists[j], base);
                 glPopMatrix(1);
                 continue;
@@ -706,7 +718,7 @@ ITCM_CODE int track_draw(Track *t, float s, int bias)
                     nfar++; continue;
                 }
             }
-            if (!pushed) { seg_matrix(g); pushed = true; }
+            if (!pushed) { seg_matrix(t, g); pushed = true; }
             polys += draw_list(t, i, lr, base);
         }
         if (pushed) glPopMatrix(1);
