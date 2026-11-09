@@ -22,5 +22,6 @@ void hud_shadow(bool on);
 int  hud_soft_text(u8 *dst, int x, int y, int font, int align, const char *s, const u8 col[4]);   // into an 8-bit 256 x 192 bitmap                  // text drop shadow (on by default)
 int  hud_soft_width(int font, const char *s);                    // its width in pixels
 void tex_sync(void);
-bool tex_upload(int name, int type, int w, int h, int param, const void *texels, const void *pal, int ncol);   // tear-free upload (vblank pieces)
+bool tex_upload(int name, int type, int w, int h, int param, const void *texels, const void *pal, int ncol);
+void tex_update(int name, const void *texels, u32 bytes, const void *pal, int ncol);   // new texels into it
    // before a texture upload: wait for the vertical blank (uploads map the banks away from the 3D engine)

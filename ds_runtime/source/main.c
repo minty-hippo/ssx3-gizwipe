@@ -30,6 +30,7 @@
 #include <unistd.h>
 #include "fireworks.h"
 #include "voice.h"
+#include "board.h"
 #include "career.h"
 
 // exe sound ids used by the race flow (table at 0xcc338)
@@ -581,6 +582,7 @@ static void setup_3d(void)
 }
 
 static Rider *player_rider;
+static Rider *fe_rider;                  // (the menu's rider: defined with the frontend below)
 static void load_rider_meshes_b(Rider *r, int ri, bool hi, int board);
 static void load_rider_meshes(Rider *r, int ri, bool hi) { load_rider_meshes_b(r, ri, hi, 0); }
 static void load_rider_meshes_b(Rider *r, int ri, bool hi, int board)
@@ -596,6 +598,9 @@ static void load_rider_meshes_b(Rider *r, int ri, bool hi, int board)
     // the rider's own board (0x3af34: "<char>_board_<n>[_low].xgt"; the player's choice, opponents a random one)
     snprintf(nm, sizeof(nm), "%s_board_%d%s.xgt", RIDERS[ri], board & 3, hi ? "" : "_low");
     rider_set_tex(r, &r->board, nm);
+    bool own = g_opt.board && (r == player_rider || r == fe_rider);    // port: the board designer's board
+    // (both boards take the 128 x 128 design: def_board's texture coordinates run 0..128 texels across too)
+    if (own) rider_use_tex(&r->board, board_texture(true));
     // the player in a race also keeps the high-detail model (the menu's): drawn while the frame has the polygons
     rider_free_mesh(&r->body_hi); rider_free_mesh(&r->board_hi); r->use_hi = false;
     if (!hi && r == player_rider) {
@@ -603,6 +608,7 @@ static void load_rider_meshes_b(Rider *r, int ri, bool hi, int board)
         if (rider_load_mesh(r, &r->body_hi, nm) && rider_load_mesh(r, &r->board_hi, XT_67)) {
             snprintf(nm, sizeof(nm), "%s_board_%d.xgt", RIDERS[ri], board & 3);
             rider_set_tex(r, &r->board_hi, nm);
+            if (own) rider_use_tex(&r->board_hi, board_texture(true));
             r->board_scale_hi = (1.0f / 6.5f) * (float)0x7080 / (strcmp(RIDERS[ri], "griff") ? 0x550 : 0x4a0);
             r->board_lift_hi = 0;
         } else { rider_free_mesh(&r->body_hi); rider_free_mesh(&r->board_hi); }
@@ -1142,7 +1148,8 @@ void fe_draw_rider(int yaw, int cx, int cy, int h, int anim, bool restart)
     float key = 0;
     if (cl) { t += 17; key = (t * 30.0f / 1000.0f) / cl->interval; }
     float rp[3] = { 0, 0, 0 };
-    glPolyFmt(POLY_ALPHA(31) | POLY_CULL_NONE | POLY_FORMAT_LIGHT0 | POLY_ID(1));
+    rider_fmt = POLY_ALPHA(31) | POLY_CULL_NONE | POLY_FORMAT_LIGHT0 | POLY_ID(1); glPolyFmt(rider_fmt);
+    rider_board_cull = POLY_CULL_FRONT;    // with the board bone's own mirror (a regular stance), BACK: the menus' projection is not mirrored
     draw_rider(fe_rider, &fe_ph, rp, cl, key, true);
     glMatrixMode(GL_PROJECTION); glPopMatrix(1); glMatrixMode(GL_MODELVIEW);
 }
@@ -1182,6 +1189,7 @@ static void load_best(int *best)
         if (on < 5 || g_opt.lang > 4) g_opt.lang = 0xff;                            // (before stage 42: no language yet)
         if (on < 6 || g_opt.rumble > 1) g_opt.rumble = 1;                           // (before stage 64: no rumble option)
         if (on < 8 || g_opt.voice > 1 || g_opt.vduck > 1) { g_opt.voice = 0; g_opt.vduck = 1; }   // (before stage 76: Voice Clips off)
+        if (on < 9 || g_opt.board > 1) g_opt.board = 0;                              // (before stage 79: no custom board)
         if (g_opt.master > 10) g_opt.master = 10; if (g_opt.fx > 10) g_opt.fx = 10; if (g_opt.cam > 2) g_opt.cam = 1; if (g_opt.fps30 > 1) g_opt.fps30 = 0;
     }
     fclose(f);
@@ -1439,7 +1447,7 @@ int main(int argc, char **argv)
     static int best_ms[15];                                       // per event
     bool in_menu = true;
     career_defaults();
-    load_best(best_ms); shadow_load_all(); fe_apply_options(); voice_init(have_fat_g);
+    load_best(best_ms); shadow_load_all(); fe_apply_options(); voice_init(have_fat_g); board_init(have_fat_g);
     fe_rider = &rider; fe_clip = id_clip; fe_best = best_ms;
     bool uber_tip_done = false;
     int race = R_INTRO, intro_ms = 0, count_ms = 0, race_steps = 0, fin_time = 0, spin = 0, place = 1, fin_place = 0; bool new_best = false;
@@ -1599,12 +1607,18 @@ int main(int argc, char **argv)
             START_REPLAY(rec, 48 + rec_n * 12);
             continue;
         }
-        else if (race == R_DONE && ph.race_over && (down & KEY_A)) {   // Next heat / Final Round, else run it again (0x7171c)
-            if (heats() && round_ok && ev_round < 2) ev_round++;
-            else if (heats() && round_ok && ev_round == 2) { ev_round = 0; memset(pscore, 0, sizeof(pscore)); stand_init(ri); }
+        // port: once the event is over, A goes back to the menu and B runs it again (A restarted it); between
+        // heats A still goes on to the next heat /[...] (0x7171c)
+        else if (race == R_DONE && ph.race_over && (down & KEY_A) && heats() && round_ok && ev_round < 2) {
+            ev_round++;
             RESET_RIDER(); continue;
         }
-        else if (race == R_DONE && ph.race_over && (down & KEY_B)) { QUIT_TO_MENU(); continue; }
+        else if (race == R_DONE && ph.race_over && (down & KEY_A)) { QUIT_TO_MENU(); continue; }
+        else if (race == R_DONE && ph.race_over && (down & KEY_B) && heats() && round_ok && ev_round < 2) { QUIT_TO_MENU(); continue; }
+        else if (race == R_DONE && ph.race_over && (down & KEY_B)) {
+            if (heats() && round_ok && ev_round == 2) { ev_round = 0; memset(pscore, 0, sizeof(pscore)); stand_init(ri); }
+            RESET_RIDER(); continue;
+        }
 
         int line0 = NOW_LINE();
         // fixed 40 ms physics steps (as the original), rendered with interpolation
@@ -2042,7 +2056,8 @@ int main(int argc, char **argv)
         }
         int l_track = NOW_LINE();
 
-        glPolyFmt(POLY_ALPHA(31) | POLY_CULL_NONE | POLY_FORMAT_LIGHT0 | POLY_FOG | POLY_ID(1));
+        rider_fmt = POLY_ALPHA(31) | POLY_CULL_NONE | POLY_FORMAT_LIGHT0 | POLY_FOG | POLY_ID(1); glPolyFmt(rider_fmt);
+        rider_board_cull = POLY_CULL_BACK;    // with the board bone's own mirror, FRONT: the race view is X-mirrored (as track_cull)
         rider_async = true;                                        // each rider's body list runs on while the next is posed
         {
             const Clip *cl = NULL; float key = 0;
@@ -2608,15 +2623,16 @@ int main(int argc, char **argv)
                 }
                 hud_font(3);
                 if (ph.race_over) {
-                    const char *next = !heats() ? "Race again" : round_ok && ev_round == 0 ? (race_kind == 1 ? "Next heat" : "Heat 2")
-                                     : round_ok && ev_round == 1 ? "Final Round" : round_ok ? "Start over" : "Restart";
-                    const char *ta = !heats() ? LX(next, "Restart") : L(next);
-                    snprintf(s, sizeof(s), "A  %s   X  %s   Y  %s   B  %s", ta, L("Replay"), L("Records"), L("Quit"));
-                    if (hud_text_width(s) > 248) snprintf(s, sizeof(s), "A %s  X %s  Y %s  B %s", ta, L("Replay"), L("Records"), L("Quit"));
+                    // (A: the next heat while the event goes on, else back to the menu; B: run it again)
+                    bool more = heats() && round_ok && ev_round < 2;
+                    const char *ta = more ? L(ev_round == 0 ? (race_kind == 1 ? "Next heat" : "Heat 2") : "Final Round") : L("Quit");
+                    const char *tb = more ? L("Quit") : heats() && round_ok ? L("Start over") : LX("Race again", "Restart");
+                    snprintf(s, sizeof(s), "A  %s   X  %s   Y  %s   B  %s", ta, L("Replay"), L("Records"), tb);
+                    if (hud_text_width(s) > 248) snprintf(s, sizeof(s), "A %s  X %s  Y %s  B %s", ta, L("Replay"), L("Records"), tb);
                     if (hud_text_width(s) <= 248) hud_text(128, 162, 2, s, WHITE);
                     else {                                     // still too wide (long translations): two lines
                         snprintf(s, sizeof(s), "A %s   X %s", ta, L("Replay")); hud_text(128, 156, 2, s, WHITE);
-                        snprintf(s, sizeof(s), "Y %s   B %s", L("Records"), L("Quit")); hud_text(128, 165, 2, s, WHITE);
+                        snprintf(s, sizeof(s), "Y %s   B %s", L("Records"), tb); hud_text(128, 165, 2, s, WHITE);
                     }
                 }
             }

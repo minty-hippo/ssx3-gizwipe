@@ -14,7 +14,7 @@ typedef struct {
 
 extern const Event EVENTS[15];
 
-enum { FE_TITLE, FE_MAIN, FE_PEAK, FE_EVENT, FE_RIDER, FE_ATTR, FE_DONE, FE_OPT, FE_SHADOWS, FE_PROFILE, FE_MP, FE_MPJOIN, FE_MPLOBBY, FE_LANG, FE_VOICE };
+enum { FE_TITLE, FE_MAIN, FE_PEAK, FE_EVENT, FE_RIDER, FE_ATTR, FE_DONE, FE_OPT, FE_SHADOWS, FE_PROFILE, FE_MP, FE_MPJOIN, FE_MPLOBBY, FE_LANG, FE_VOICE, FE_BOARD };
 
 void fe_enter(int screen);                 // (re)load that screen's images
 int  fe_screen(void);
@@ -29,7 +29,7 @@ void fe_show_rider(int ri);                // load that rider's meshes
 void fe_draw_rider(int yaw, int cx, int cy, int h, int anim, bool restart);   // draw it (3D, before the HUD pass): centred on (cx, cy), h px tall, animation id
 int  fe_char_of(int rider);                // exe character index of RIDERS[rider]
 void fe_save(void);                        // write the save (career, attributes)
-typedef struct { u8 master, fx, cam, fps30, lang, rumble, voice, vduck; } Options;   // (voice, vduck: Voice Clips on, music ducking under them)
+typedef struct { u8 master, fx, cam, fps30, lang, rumble, voice, vduck, board; } Options;   // (voice, vduck: Voice Clips on, music ducking under them)
    // (rumble: port addition, Rumble Pak on / off)   // Options screen: volumes 0..10, camera 0 Near / 1 Mid / 2 Far, 30 fps cap, language (0xff = not chosen yet)
 extern Options g_opt;
 bool fe_shadow(void);

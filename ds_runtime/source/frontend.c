@@ -15,6 +15,7 @@
 #include "submap.h"
 #include "lang.h"
 #include "voice.h"
+#include "board.h"
 #include "music.h"
 
 // names: the exe's string block at 0xba900; descriptions: pointer table 0x9b160 (English); peaks / tracks as the
@@ -138,8 +139,9 @@ static int screen = FE_TITLE, sel_peak, sel_event, sel_rider, sel_main, frames, 
 static bool dirty = true;
 static int play_mode;                                   // 0 [...], 1 Single Event, 2 Shadow Racing, 3 Multiplayer
 #define career_mode (play_mode == 0)
-Options g_opt = { 10, 10, 1, 0, 0xff, 1, 0, 1 };
+Options g_opt = { 10, 10, 1, 0, 0xff, 1, 0, 1, 0 };
 static int prof_page, arr_l, arr_r;
+static int bd_face, bd_tool = 1, bd_col = 2, bd_size = 2, bd_stk, bd_page;   // the board designer
 static int vc_sel, vc_row, vc_pend, vc_msg_t; static bool vc_edit, vc_confirm; static const char *vc_msg;   // Voice Clips
 static int sel_opt, msg_t, sel_sh; static bool confirm, watching;
 bool fe_watch(void) { return watching; }                              // options cursor; "no shadow" message timer
@@ -427,18 +429,20 @@ bool fe_frame(u32 down, int *event, int *rider, int nriders, const char *const *
     }
     case FE_MAIN: {                                    // 0x23dfc
         // (Voice Clips: port addition)
-        static const char *const ITEMS[6] = { XT_30, XT_31, XT_32, "Multiplayer", "Voice Clips", "Options" };
-        static const char *const HELP[6] = { XT_33,
+        static const char *const ITEMS[7] = { XT_30, XT_31, XT_32, "Multiplayer", "Voice Clips", "Board Designer", "Options" };
+        static const char *const HELP[7] = { XT_33,
                                              XT_34,
                                              XT_35,
                                              XT_36,
                                              "Record your own sounds with the microphone for SUPER UBER, winning, passing and knockdowns.",
+                                             "Draw your own board, top and bottom, with the stylus and stickers.",
                                              XT_37 };
-        if (down & KEY_UP) { sel_main = (sel_main + 5) % 6; dirty = true; }
-        if (down & KEY_DOWN) { sel_main = (sel_main + 1) % 6; dirty = true; }
+        if (down & KEY_UP) { sel_main = (sel_main + 6) % 7; dirty = true; }
+        if (down & KEY_DOWN) { sel_main = (sel_main + 1) % 7; dirty = true; }
         if (down & KEY_B) { fe_enter(FE_TITLE); return false; }
         if (down & (KEY_A | KEY_START)) {
-            if (sel_main == 5) { fe_enter(FE_OPT); sel_opt = 0; return false; }
+            if (sel_main == 6) { fe_enter(FE_OPT); sel_opt = 0; return false; }
+            if (sel_main == 5) { fe_enter(FE_BOARD); return false; }
             if (sel_main == 4) { fe_enter(FE_VOICE); vc_edit = false; return false; }
             if (sel_main == 3) { fe_enter(FE_MP); sel_mp = 0; return false; }
             play_mode = sel_main; fe_enter(FE_PEAK); return false;
@@ -456,7 +460,7 @@ bool fe_frame(u32 down, int *event, int *rider, int nriders, const char *const *
         lines_to(SX(0x84) - 3, SX(0x55) - 4);
         hud_begin();
         frame("Main Menu", true);
-        list(SX(0x84), SX(0x55) - 6, SX(0x96), 12, ITEMS, 6, sel_main, true, NULL);   // (the description: bottom screen only)
+        list(SX(0x84), SX(0x55) - 10, SX(0x96), 12, ITEMS, 7, sel_main, true, NULL);   // (the description: bottom screen only)
         hud_end();
         return false;
     }
@@ -534,7 +538,11 @@ bool fe_frame(u32 down, int *event, int *rider, int nriders, const char *const *
             if (career_mode) {                        // the event's cash (0x7098c) and what opens it
                 char a2[20]; const s32 *r = EV_REWARD[lst[sel_event]];
                 for (int k = 0; k < 3 && r[k] && y < 156; k++) {
-                    career_fmt(a2, r[k]); subui_text(20, y, 3, 0, PLACE_TXT[k], SU_GREY); subui_text(46, y, 3, 0, a2, SU_GREEN); y += 10;
+                    // port: a place already won is marked (a tick-box and "WON"; its prize was paid)
+                    bool won = pf & (1 << k);
+                    career_fmt(a2, r[k]);
+                    if (won) { subui_rect(13, y + 1, 5, 5, SU_ORANGE); subui_text(98, y, 3, 0, "WON", SU_ORANGE); }
+                    subui_text(20, y, 3, 0, PLACE_TXT[k], won ? SU_ORANGE : SU_GREY); subui_text(46, y, 3, 0, a2, won ? SU_GREEN : SU_WHITE); y += 10;
                 }
                 if (!open && y < 156) { career_fmt(a2, EV_UNLOCK[lst[sel_event]]); subui_text(20, y, 3, 0, "LOCKED", SU_RED); subui_text(20, y + 10, 3, 0, a2, SU_RED); y += 20; }
                 career_fmt(a2, career.cash); subui_text(20, 160, 3, 0, XT_29, SU_GREY); subui_text(236, 160, 3, 1, a2, SU_GREEN);
@@ -569,6 +577,13 @@ bool fe_frame(u32 down, int *event, int *rider, int nriders, const char *const *
         for (int i = 0; i < n; i++) { names_[i] = EVENTS[lst[i]].name; dim[i] = play_mode == 2 ? !fe_has_shadow(lst[i]) : !career_unlocked(lst[i]); }
         list(SX(10), SX(0x49) - 2, SX(0x6e), 13, names_, n, sel_event, false, dim);
         hud_font(3);
+        for (int i = 0; i < n; i++) {                  // port: the best place won so far, beside each event
+            u8 pf = career.placed[lst[i]];
+            if (!(pf & 7)) continue;
+            int k = (pf & 1) ? 0 : (pf & 2) ? 1 : 2;
+            static const u16 MEDAL[3] = { RGB15(31, 25, 4), RGB15(24, 24, 26), RGB15(26, 15, 7) };
+            hud_text(SX(10) + SX(0x6e) - 3, SX(0x49) - 2 + i * 13 + 3, 1, k == 0 ? "1st" : k == 1 ? "2nd" : "3rd", i == sel_event ? C_WHITE : MEDAL[k]);
+        }
         snprintf(s, sizeof(s), "%s", L_kind(e->kind)); hud_text(SX(10), SX(0x49) + n * 13 + 2, 0, s, C_TITLE);
         if (play_mode == 2 && msg_t > 0) wrap_hud(SX(10), SX(0x49) + n * 13 + 12, SX(0x6e), XT_39, RGB15(31, 12, 8), 9);
         else if (play_mode == 2 && !open) hud_text(SX(10), SX(0x49) + n * 13 + 12, 0, "No shadow yet", RGB15(31, 12, 8));
@@ -996,7 +1011,7 @@ bool fe_frame(u32 down, int *event, int *rider, int nriders, const char *const *
             }
             if (dir && (vc_row == VR_SND || vc_row == VR_SND + 1)) {   // a game sound to play with the clip
                 u8 *b = &fx->bank[vc_row - VR_SND];
-                *b = (u8)((*b + VC_NSND + dir) % VC_NSND); voice_save(slot); dirty = true;
+                *b = (u8)((*b + VC_NSND + dir) % VC_NSND); vc_pend = 40; dirty = true;   // (mixed into the clip once it rests)
                 voice_bank_preview(*b);
             }
             if (vc_pend > 0 && --vc_pend == 0) { voice_apply(slot); voice_save(slot); }   // the effects re-rendered once the sliders rest
@@ -1080,6 +1095,131 @@ bool fe_frame(u32 down, int *event, int *rider, int nriders, const char *const *
             hud_rect(x, my + 22, w, 5, RGB15(6, 8, 12), 1); hud_rect(x, my + 22, w * voice_rec_level() / 100, 5, RGB15(10, 28, 10), 2);
         } else if (vc_msg) {                           // (the bottom list is full: messages up here)
             hud_font(3); hud_text(SX(0x84) + SX(0x96) / 2, my, 2, vc_msg, C_WHITE); hud_font(0);
+        }
+        hud_end();
+        return false;
+    }
+    case FE_BOARD: {                                   // port addition: the board designer (board.c)
+        // bottom screen: tool buttons, the face being drawn (its 128 x 64 texels at 2x, the board lengthways),
+        // then the colours or the stickers; top screen: both faces as they will be, and the controls
+        enum { T_FACE, T_PEN, T_STICK, T_FILL, T_UNDO, T_ONOFF, T_N };
+        static const char *const TN[T_N] = { "SIDE", "PEN", "STICKER", "FILL", "UNDO", "" };
+        enum { CY = 28, CH = 128, SY = 158 };
+        static u8 *undo; static int lastx = -1, lasty = -1, up_t;
+        int face;
+        // (a canvas point: across the screen = along the board, texel row v; down = across it, column u)
+        if (!undo) undo = malloc(sizeof(board_px));
+        u32 hk = keysHeld();
+        if (down & KEY_B) { board_save(); board_changed(); fe_enter(FE_MAIN); return false; }
+        if (down & KEY_L) { bd_size = bd_size > 1 ? bd_size - 1 : 1; dirty = true; }
+        if (down & KEY_R) { bd_size = bd_size < 4 ? bd_size + 1 : 4; dirty = true; }
+        if ((down & KEY_Y) && undo) { u8 t; for (u32 i = 0; i < sizeof(board_px); i++) { t = board_px[i]; board_px[i] = undo[i]; undo[i] = t; } board_changed(); dirty = true; }
+        if (down & KEY_SELECT) { bd_face ^= 1; dirty = true; }
+        if (down & KEY_START) { g_opt.board = !g_opt.board; fe_save(); dirty = true; }
+        face = bd_face ? 0 : 64;   // (the top deck is the texture's right half)
+        if (hk & KEY_TOUCH) {
+            touchPosition tp; touchRead(&tp);
+            int x = tp.px, y = tp.py;
+            if ((down & KEY_TOUCH) && y < 26) {        // the tool buttons
+                int b = x / 42; if (b > T_N - 1) b = T_N - 1;
+                if (b == T_FACE) bd_face ^= 1;
+                else if (b == T_PEN || b == T_STICK || b == T_FILL) bd_tool = b;
+                else if (b == T_UNDO && undo) { u8 t; for (u32 i = 0; i < sizeof(board_px); i++) { t = board_px[i]; board_px[i] = undo[i]; undo[i] = t; } board_changed(); }
+                else if (b == T_ONOFF) { g_opt.board = !g_opt.board; fe_save(); }
+                dirty = true;
+            } else if ((down & KEY_TOUCH) && y >= SY && y < SY + 20) {   // the colours / the stickers
+                if (bd_tool != T_STICK) { bd_col = x / 16; if (bd_col > 15) bd_col = 15; }
+                else {
+                    int ns = board_nstickers(), per = 7, slot = x / 32;
+                    if (slot == 7) bd_page = (bd_page + 1) % ((ns + per - 1) / per);
+                    else if (bd_page * per + slot < ns) bd_stk = bd_page * per + slot;
+                }
+                dirty = true;
+            } else if (y >= CY && y < CY + CH) {        // the canvas
+                if (down & KEY_TOUCH) { if (undo) memcpy(undo, board_px, sizeof(board_px)); lastx = x; lasty = y; }
+                if (bd_tool == T_PEN && lastx >= 0) {
+                    int dx = x - lastx, dy = y - lasty, n = (abs(dx) > abs(dy) ? abs(dx) : abs(dy)) / 2 + 1;
+                    for (int k = 0; k <= n; k++) {     // a line from the last point: a stroke without gaps
+                        int px = lastx + dx * k / n, py = lasty + dy * k / n, r = bd_size - 1;
+                        int v0 = px / 2, u0 = (py - CY) / 2;
+                        for (int j = -r; j <= r; j++) for (int i = -r; i <= r; i++) {
+                            if (i * i + j * j > r * r + r) continue;
+                            int v = v0 + i, u = u0 + j;
+                            if (v >= 0 && v < BOARD_TEX && u >= 0 && u < 64) board_px[v * BOARD_TEX + face + u] = bd_col;
+                        }
+                    }
+                    board_changed(); dirty = true;
+                } else if (bd_tool == T_STICK && (down & KEY_TOUCH)) {   // a sticker, centred on the point
+                    int w, h; const u8 *sp = board_sticker(bd_stk, &w, &h);
+                    if (sp) {
+                        int sc = bd_size < 2 ? 1 : 2, v0 = x / 2 - w * sc / 2, u0 = (y - CY) / 2 - h * sc / 2;
+                        for (int j = 0; j < h * sc; j++) for (int i = 0; i < w * sc; i++) {
+                            u8 c = sp[(j / sc) * w + i / sc];
+                            int v = v0 + i, u = u0 + j;
+                            if (c != 255 && v >= 0 && v < BOARD_TEX && u >= 0 && u < 64) board_px[v * BOARD_TEX + face + u] = c;
+                        }
+                        board_changed(); dirty = true;
+                    }
+                } else if (bd_tool == T_FILL && (down & KEY_TOUCH)) {    // the whole side in the colour
+                    for (int v = 0; v < BOARD_TEX; v++) memset(&board_px[v * BOARD_TEX + face], bd_col, 64);
+                    board_changed(); dirty = true;
+                }
+                lastx = x; lasty = y;
+            }
+        } else lastx = -1;
+        face = bd_face ? 0 : 64;                       // (the side may have just changed)
+        if (dirty || (++up_t & 3) == 0) {
+            if (dirty) {
+                subui_begin("Board Designer", NULL);
+                u8 *pxl = subui_pixels();
+                subui_own_palette(board_pal, BOARD_NCOL);
+                memset(pxl, 192, 256 * 180);           // (the panel's black)
+                for (int b = 0; b < T_N; b++) {
+                    bool on = b == bd_tool || (b == T_ONOFF && g_opt.board);
+                    subui_rect(b * 42 + 1, 2, 40, 22, on ? 1 : 3);
+                    const char *t = b == T_ONOFF ? (g_opt.board ? "ON" : "OFF") : b == T_FACE ? (bd_face ? "BOTTOM" : "TOP") : TN[b];
+                    subui_text(b * 42 + 21, 8, 3, 2, t, on ? 0 : 0);
+                }
+                // the canvas
+                for (int sy = 0; sy < CH; sy++) for (int sx = 0; sx < 256; sx++)
+                    pxl[(CY + sy) * 256 + sx] = 202 + board_px[(sx / 2) * BOARD_TEX + face + sy / 2];
+                if (bd_tool != T_STICK) {
+                    for (int c = 0; c < 16; c++) for (int j = 0; j < 18; j++) for (int i = 0; i < 15; i++)
+                        pxl[(SY + j) * 256 + c * 16 + i] = (c == bd_col && (j < 2 || j > 15 || i < 2 || i > 12)) ? 193 : 202 + c;
+                } else {
+                    int ns = board_nstickers();
+                    for (int s = 0; s < 7; s++) {
+                        int k = bd_page * 7 + s, w, h; const u8 *sp = board_sticker(k, &w, &h);
+                        if (!sp) continue;
+                        int sc = w > 30 || h > 18 ? 2 : 1;    // (the big ones at half size)
+                        for (int j = 0; j < h / sc && j < 18; j++) for (int i = 0; i < w / sc && i < 30; i++) {
+                            u8 c = sp[(j * sc) * w + i * sc];
+                            if (c != 255) pxl[(SY + j) * 256 + s * 32 + 1 + i] = 202 + c;
+                        }
+                        if (k == bd_stk) for (int i = 0; i < 31; i++) { pxl[(SY + 18) * 256 + s * 32 + i] = 194; pxl[(SY + 19) * 256 + s * 32 + i] = 194; }
+                    }
+                    subui_text(7 * 32 + 16, SY + 4, 3, 2, ns > 7 ? ">>" : "", 0);
+                }
+                subui_show();
+                dirty = false;
+            }
+            board_textures_update();
+        }
+        hud_begin();
+        frame("Board Designer", true);
+        {   // both sides as they will look (the texture's halves, the board upright)
+            int tx = board_texture(true);
+            for (int f = 0; f < 2; f++) {                 // (f 0: the top deck, the texture's right half)
+                int x = 40 + f * 96, y = 46;
+                if (f == bd_face) hud_rect(x - 3, y - 3, 70, 134, RGB15(31, 19, 3), 1);
+                hud_image(tx, x, y, 64, 128, f ? 0 : 64, 0, 64, 128, C_WHITE, 2);
+                hud_font(3); hud_text(x + 32, y + 131, 2, f ? "BOTTOM" : "TOP", f == bd_face ? C_WHITE : RGB15(18, 18, 20));
+            }
+            hud_font(3);
+            char b[48];
+            snprintf(b, sizeof(b), "Custom board: %s    Size %d (L/R)   Y undo   B save", g_opt.board ? L("On") : L("Off"), bd_size);
+            hud_text(128, 30, 2, b, g_opt.board ? RGB15(16, 31, 14) : RGB15(24, 24, 26));
+            hud_font(0);
         }
         hud_end();
         return false;

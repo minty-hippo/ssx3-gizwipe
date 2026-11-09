@@ -69,3 +69,43 @@ void sfx_stop_all(void)
 {
     sfx_loop(-1);
 }
+
+// port (Voice Clips): a sound decoded to 16-bit PCM at `rate` (IMA-ADPCM as the DS plays it, resampled linearly)
+// so it can be mixed into a clip; returns the samples written (at most max)
+int sfx_pcm(int id, int rate, s16 *out, int max)
+{
+    static const s16 STEP[89] = { 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55,
+        60, 66, 73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494,
+        544, 598, 658, 724, 796, 876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024,
+        3327, 3660, 4026, 4428, 4871, 5358, 5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899, 15289,
+        16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767 };
+    static const s8 IDX[8] = { -1, -1, -1, -1, 2, 4, 6, 8 };
+    if (!bank || id < 0 || id >= 36 || by_id[id] < 0 || max <= 0) return 0;
+    const SfxRec *r = &rec[by_id[id]];
+    const u8 *d = bank + r->off;
+    int pred = (s16)(d[0] | d[1] << 8), ix = d[2] > 88 ? 88 : d[2];
+    int nsrc = (r->bytes - 4) * 2, src_rate = r->rate ? r->rate : 22050;
+    s32 pos = 0, inc = (s32)(((s64)src_rate << 16) / rate);         // source samples a target sample, Q16
+    int have = -1, k = 0; s32 prev = pred, cur = pred;
+    for (int i = 0; i < max; i++, pos += inc) {
+        int want = pos >> 16;
+        if (want >= nsrc) break;
+        while (have < want) {                                       // decode up to the source sample wanted
+            have++;
+            int nib = (d[4 + (have >> 1)] >> ((have & 1) * 4)) & 15, st = STEP[ix], df = st >> 3;
+            if (nib & 1) df += st >> 2;
+            if (nib & 2) df += st >> 1;
+            if (nib & 4) df += st;
+            pred += (nib & 8) ? -df : df;
+            if (pred > 32767) pred = 32767;
+            if (pred < -32768) pred = -32768;
+            ix += IDX[nib & 7];
+            if (ix < 0) ix = 0;
+            if (ix > 88) ix = 88;
+            prev = cur; cur = pred;
+        }
+        s32 f = pos & 0xffff;
+        out[k++] = (s16)(prev + (((cur - prev) * (f >> 4)) >> 12));
+    }
+    return k;
+}

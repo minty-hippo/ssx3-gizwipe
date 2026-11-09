@@ -93,7 +93,7 @@ def main():
     for x in glob.glob(os.path.join(ex, 'fonts', '*.fnt')): shutil.copy(x, fo)
 
     # 4. converters
-    import ds_menu, ds_hud, ds_impostor, ds_rider, ds_audio, ds_subshots
+    import ds_menu, ds_hud, ds_impostor, ds_rider, ds_audio, ds_subshots, ds_stickers
     from ds_track import convert
     menu, fx = os.path.join(nfs, 'menu'), os.path.join(nfs, 'fx')
     step('menus, HUD, effects, skies')
@@ -102,6 +102,7 @@ def main():
     ds_menu.fx(bm, fx); ds_menu.volfog(bm, fx); ds_menu.boardtrail(bm, fx); ds_menu.boardshadow(bm, fx)
     ds_impostor.main(os.path.join(ex, 'sprites'), os.path.join(fx, 'tree_imp.ssxi'))
     ds_subshots.main(menu)
+    ds_stickers.main(os.path.join(ex, 'bitmaps'), os.path.join(menu, 'stickers.bin'))
     ds_hud.main(os.path.join(work, 'export'), os.path.join(nfs, 'hud.ssxh'))
     step('riders and animations')
     ds_rider.main(os.path.join(ex, 'characters'), nfs, extra_dirs=(os.path.join(ex, 'sprites'),))

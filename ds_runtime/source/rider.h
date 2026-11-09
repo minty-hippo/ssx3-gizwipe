@@ -51,6 +51,8 @@ void rider_pose_blend(Rider *r, const Clip *a, float ka, bool la, const Clip *b,
 void rider_bone_pos(const Rider *r, int bone, float out[3]);    // bone origin in rider space (game units)
 // draw at world matrix W (game units); current GL matrix must be the camera (modelview)
 void rider_draw(Rider *r, const Mat34 *world, int board_bone);
+void rider_use_tex(Mesh *m, int tex);
+extern u32 rider_fmt, rider_board_cull;   // the riders' polygon format; the board's culling within it   // (board designer) draw the mesh with a texture owned elsewhere
 extern bool rider_async; void rider_gx_wait(void);              // race riders: the body list left running (rider.c)
 void rider_free_mesh(Mesh *m);
 bool rider_set_tex(Rider *r, Mesh *m, const char *texname);   // swap a mesh's texture (by riders.ssxr name)

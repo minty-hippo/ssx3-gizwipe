@@ -286,6 +286,14 @@ static void vram_put(void *dst, const void *src, u32 n)
     }
 }
 
+// port (board designer): new texels / palette into a texture made by tex_upload (same size and type)
+void tex_update(int name, const void *texels, u32 bytes, const void *pal, int ncol)
+{
+    void *dst = glGetTexturePointer(name);
+    if (dst && texels) vram_put(dst, texels, bytes);
+    if (pal) { glBindTexture(0, name); void *pd = glGetColorTablePointer(name); if (pd) vram_put(pd, pal, ncol * 2); }
+}
+
 bool tex_upload(int name, int type, int w, int h, int param, const void *texels, const void *pal, int ncol)
 {
     glBindTexture(0, name);

@@ -24,45 +24,107 @@ static int play_left;                                       // frames the clip s
 int voice_dbg[2];
 bool voice_fat(void) { return fat; }
 static bool banks(int s) { return (C[s].fx.bank[0] > 0 && C[s].fx.bank[0] < VC_NSND) || (C[s].fx.bank[1] > 0 && C[s].fx.bank[1] < VC_NSND); }
-bool voice_has(int s) { return s >= 0 && s < VC_N && (C[s].nout > 0 || banks(s)); }
+bool voice_has(int s) { return s >= 0 && s < VC_N && C[s].nout > 0; }
 int voice_ms(int s) { return s >= 0 && s < VC_N ? C[s].n * 1000 / VC_RATE : 0; }
 VoiceFx *voice_fx(int s) { return &C[s].fx; }
+
+//[...]of a bank as 16-bit PCM at the clip's rate, cut to the take's limit (2.5 s) with the last
+// 0.4 s faded out (applause runs well past it); returns the samples
+static int bank_pcm(int k, s16 *out)
+{
+    if (k <= 0 || k >= VC_NSND) return 0;
+    int n = sfx_pcm(VC_SND_ID[k], VC_RATE, out, VC_MAX);
+    int fade = VC_RATE * 2 / 5;
+    if (n >= VC_MAX) for (int i = n - fade; i < n; i++) out[i] = (s16)(out[i] * (n - i) / fade);
+    return n;
+}
 
 void voice_apply(int s)
 {
     free(C[s].out); C[s].out = NULL; C[s].nout = 0;
-    if (!C[s].raw || !C[s].n) return;
-    int cap = C[s].n + VC_RATE;                             // room for the echo's tail
-    s8 *o = malloc(cap);
-    if (!o) return;
+    int k = 0;
+    s8 *o = NULL;
+    if (C[s].raw && C[s].n) {
+        int cap = C[s].n + VC_RATE;                         // room for the echo's tail
+        o = malloc(cap);
+        if (!o) return;
 #ifdef TEST_VOICE
-    cpuStartTiming(2);
+        cpuStartTiming(2);
 #endif
-    int k = vfx_render(C[s].raw, C[s].n, VC_RATE, &C[s].fx, o, cap);
+        k = vfx_render(C[s].raw, C[s].n, VC_RATE, &C[s].fx, o, cap);
 #ifdef TEST_VOICE
-    voice_dbg[1] = (int)(cpuEndTiming() / 33514);   // ms
+        voice_dbg[1] = (int)(cpuEndTiming() / 33514);   // ms
 #endif
-    s8 *t = realloc(o, k > 0 ? k : 1); if (t) o = t;
+    }
+    // port: the slot's game sounds are mixed into the clip itself (they started together but came out of separate
+    // channels - one could end up late or cut short); the take's effects leave them as they are
+    if (banks(s)) {
+        {
+            int len = k;
+            s32 *mix = NULL;
+            int nb[2] = { 0, 0 };
+            for (int j = 0; j < 2; j++) {
+                int kk = C[s].fx.bank[j];
+                if (kk <= 0 || kk >= VC_NSND || (j == 1 && kk == C[s].fx.bank[0])) continue;
+                nb[j] = 1;
+            }
+            int maxn = len;
+            s16 *bb[2] = { NULL, NULL }; int bn[2] = { 0, 0 };
+            for (int j = 0; j < 2; j++) if (nb[j]) {
+                bb[j] = malloc(VC_MAX * 2);
+                if (bb[j]) { bn[j] = bank_pcm(C[s].fx.bank[j], bb[j]); if (bn[j] > maxn) maxn = bn[j]; }
+            }
+            mix = maxn ? malloc(maxn * 4) : NULL;
+            if (mix) {
+                for (int i = 0; i < maxn; i++) mix[i] = i < k ? o[i] * 256 : 0;
+                for (int j = 0; j < 2; j++) if (bb[j]) for (int i = 0; i < bn[j]; i++) mix[i] += bb[j][i] * 3 / 4;
+                s32 pk = 1; for (int i = 0; i < maxn; i++) { s32 v = mix[i] < 0 ? -mix[i] : mix[i]; if (v > pk) pk = v; }
+                s32 g = pk > 32000 ? (s32)((s64)32000 * 65536 / pk) : 65536;
+                s8 *no = malloc(maxn);
+                if (no) {
+                    for (int i = 0; i < maxn; i++) { s32 v = (s32)(((s64)mix[i] * g) >> 24); no[i] = (s8)(v > 127 ? 127 : v < -128 ? -128 : v); }
+                    free(o); o = no; k = maxn;
+                }
+                free(mix);
+            }
+            for (int j = 0; j < 2; j++) free(bb[j]);
+        }
+    }
+    if (!o || k <= 0) { free(o); return; }
+    s8 *t = realloc(o, k); if (t) o = t;
     C[s].out = o; C[s].nout = k;
     DC_FlushRange(o, k);
 }
 
+static s8 *pv_buf; static int pv_ch = -1;               // (voice_bank_preview)
 void voice_stop(void) { if (play_ch >= 0) soundKill(play_ch); play_ch = -1; }
 void voice_play(int s)
 {
     if (!voice_has(s)) return;
     voice_stop();
-    for (int b = 0; b < 2; b++) {                            // the slot's game sounds, at the sound effects' volume
-        int k = C[s].fx.bank[b];
-        if (k > 0 && k < VC_NSND && (b == 0 || k != C[s].fx.bank[0])) sfx_play(VC_SND_ID[k]);
-    }
-    play_left = banks(s) ? 60 : 0;
+    if (pv_ch >= 0) { soundKill(pv_ch); pv_ch = -1; }
     int vol = 127 * C[s].fx.vol / 10 * g_opt.master / 10;
     if (vol <= 0 || C[s].nout <= 0) return;
     play_ch = soundPlaySample(C[s].out, SoundFormat_8Bit, C[s].nout & ~3, VC_RATE, vol, 64, false, 0);
-    if (C[s].nout * 60 / VC_RATE + 6 > play_left) play_left = C[s].nout * 60 / VC_RATE + 6;
+    play_left = C[s].nout * 60 / VC_RATE + 6;
 }
-void voice_bank_preview(int k) { if (k > 0 && k < VC_NSND) sfx_play(VC_SND_ID[k]); }
+// a game sound on its own as it is picked: the one before it is cut off; as in a clip, at most 2.5 s, faded out
+void voice_bank_preview(int k)
+{
+    if (pv_ch >= 0) soundKill(pv_ch);
+    pv_ch = -1;
+    if (k <= 0 || k >= VC_NSND) return;
+    if (!pv_buf) pv_buf = malloc(VC_MAX);
+    s16 *t = malloc(VC_MAX * 2);
+    if (!pv_buf || !t) { free(t); return; }
+    int n = bank_pcm(k, t);
+    for (int i = 0; i < n; i++) pv_buf[i] = (s8)(t[i] >> 8);
+    free(t);
+    if (n < 8) return;
+    DC_FlushRange(pv_buf, n);
+    int vol = 110 * g_opt.fx / 10 * g_opt.master / 10;
+    if (vol > 0) pv_ch = soundPlaySample(pv_buf, SoundFormat_8Bit, n & ~3, VC_RATE, vol, 64, false, 0);
+}
 bool voice_tick(void) { if (play_left > 0) play_left--; return play_left > 0; }
 
 static void path(char *b, int n, int s) { snprintf(b, n, "ssx3gizwipe_voice%d.vc", s); }

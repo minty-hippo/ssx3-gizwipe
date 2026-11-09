@@ -23,5 +23,7 @@ int  subui_wrap(int x, int y, int w, int font, const char *s, int colour, int lh
 void subui_bar(int x, int y, int w, int h, int value, int max);
 void subui_rect(int x, int y, int w, int h, int colour);
 void subui_show(void);
-bool subui_image(int x, int y, int w, int h, const char *path);   // a .subi picture into the panel (shown with subui_show)
+bool subui_image(int x, int y, int w, int h, const char *path);
+u8 *subui_pixels(void);                       // the panel's 256 x 192 pixels (palette indices), for subui_show
+void subui_own_palette(const u16 *p, int n);  // palette slots 202.. (at most 54) for those pixels   // a .subi picture into the panel (shown with subui_show)
 void submap_vblank(void);                  // (from the vertical blank interrupt)

@@ -374,9 +374,21 @@ bool subui_image(int x, int y, int w, int h, const char *path)
     for (int j = y; j < y + h; j++) { if (j >= 0 && j < H) { if (x > 0) work[j * W + x - 1] = C_ORANGE; if (x + w < W) work[j * W + x + w] = C_ORANGE; } }
     return true;
 }
+// port (board designer): the panel's pixels to draw on directly, and palette slots of its own (202..255: the
+// pictures' 208.. included) - shown with the next subui_show
+static u16 own_pal[54]; static volatile int own_pal_n;
+u8 *subui_pixels(void) { while (show_pending) swiWaitForVBlank(); return work; }
+void subui_own_palette(const u16 *p, int n)
+{
+    if (n > 54) n = 54;
+    memcpy(own_pal, p, n * 2);
+    for (int k = 0; k < n; k++) pal[202 + k] = p[k];
+    own_pal_n = n;
+}
 void submap_vblank(void)
 {
     if (!show_pending) return;
+    if (own_pal_n) { dmaCopyHalfWords(3, own_pal, BG_PALETTE_SUB + 202, own_pal_n * 2); own_pal_n = 0; }
     if (img_pal_new) { dmaCopyHalfWords(3, img_pal, BG_PALETTE_SUB + IMG_PAL, sizeof(img_pal)); img_pal_new = false; }
     dmaCopyHalfWords(3, work, BG_BMP_RAM_SUB(0), W * H);
     show_pending = false;

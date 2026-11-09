@@ -7,3 +7,4 @@ void sfx_loop(int id);               // the rider's loop voice (0x53058); -1 = s
 void sfx_stop_all(void);
 void sfx_volume(int pct);
 void sfx_play_name(const char *name);   // a bank entry by its file name (EASplash)            // 0..100 (Options)
+int sfx_pcm(int id, int rate, s16 *out, int max);   // (Voice Clips) a sound as 16-bit PCM at rate

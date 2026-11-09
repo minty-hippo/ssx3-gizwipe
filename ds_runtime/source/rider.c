@@ -76,17 +76,24 @@ bool rider_set_tex(Rider *r, Mesh *m, const char *texname)
         if (strncmp(t.name, texname, 24)) continue;
         if ((int)i == m->tex_idx) return true;
         int id = upload_tex(r->rf, i);
-        if (m->tex && (m->tex_idx < 0 || m->tex_idx >= NTEXC || --tex_ref[m->tex_idx] == 0)) glDeleteTextures(1, &m->tex);
+        if (m->tex && m->tex_idx != -2 && (m->tex_idx < 0 || m->tex_idx >= NTEXC || --tex_ref[m->tex_idx] == 0)) glDeleteTextures(1, &m->tex);
         m->tex = id; m->tex_idx = i;
         return true;
     }
     return false;
 }
 
+// port (board designer): a mesh drawn with a texture someone else owns (tex_idx -2: never deleted here)
+void rider_use_tex(Mesh *m, int tex)
+{
+    if (m->tex && m->tex_idx != -2 && (m->tex_idx < 0 || m->tex_idx >= NTEXC || --tex_ref[m->tex_idx] == 0)) glDeleteTextures(1, &m->tex);
+    m->tex = tex; m->tex_idx = -2;
+}
+
 void rider_free_mesh(Mesh *m)
 {
     free(m->dl);
-    if (m->tex && (m->tex_idx < 0 || m->tex_idx >= NTEXC || --tex_ref[m->tex_idx] == 0)) glDeleteTextures(1, &m->tex);
+    if (m->tex && m->tex_idx != -2 && (m->tex_idx < 0 || m->tex_idx >= NTEXC || --tex_ref[m->tex_idx] == 0)) glDeleteTextures(1, &m->tex);
     memset(m, 0, sizeof(*m));
 }
 
@@ -355,6 +362,10 @@ ITCM_CODE void rider_gx_wait(void)
     glPopMatrix(1);
     gx_pending = false;
 }
+// port: the riders' polygon format (set with it by the callers) and the culling the board alone is drawn with -
+// with none, the deck and the base a few units under it fought in the depth buffer at race distances and the base
+// showed through on top (the board designer's design came out its underside)
+u32 rider_fmt, rider_board_cull = POLY_CULL_NONE;
 ITCM_CODE void rider_draw(Rider *r, const Mat34 *world, int board_bone)
 {
     rider_gx_wait();
@@ -378,7 +389,17 @@ ITCM_CODE void rider_draw(Rider *r, const Mat34 *world, int board_bone)
         MatX W; mat_mul(&W, &Wx, &B);
         gl_mult(&W);
         glBindTexture(0, bm->tex);
+        if (rider_fmt) {
+            // a mirrored matrix (the goofy stance's negated X scale) turns the winding round: the other face culled
+            s64 d = ((s64)W.m[0][0] * (((s64)W.m[1][1] * W.m[2][2] - (s64)W.m[1][2] * W.m[2][1]) >> 12)
+                   - (s64)W.m[0][1] * (((s64)W.m[1][0] * W.m[2][2] - (s64)W.m[1][2] * W.m[2][0]) >> 12)
+                   + (s64)W.m[0][2] * (((s64)W.m[1][0] * W.m[2][1] - (s64)W.m[1][1] * W.m[2][0]) >> 12));
+            u32 c = rider_board_cull;
+            if (d < 0 && c != POLY_CULL_NONE) c ^= 3u << 6;
+            glPolyFmt((rider_fmt & ~(3u << 6)) | c);
+        }
         gx_call(bm->dl);
+        if (rider_fmt) glPolyFmt(rider_fmt);
         glPopMatrix(1);
     }
     // the body last (the board first: the body's list is the long one to leave running)

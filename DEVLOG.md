@@ -1091,5 +1091,29 @@ what the riders look like.
 * The superpipe: hosttest/pipetest.c rides BHP1 wall to wall (optionally spinning) and prints each air's
   launch, time, turn, landing and speed after; no change made yet - see the reply for what it found.
 
+## Stage 79: Voice Clips' game sounds mixed in; results and event marks; the board designer
+* Voice Clips: the two game-sound banks are now mixed into the clip itself (3/4 level, under the take), so they
+  play together with the voice rather than one after the other. A bank sound longer than the 2.5 s record limit
+  (the applause) is cut there with its last 0.4 s faded out. The mix is redone once a slider rests. Previewing a
+  bank sound stops the previous preview (and any clip playing) first.
+* Results: once an event is over (a single race, or the last heat), A returns to the menu; B races it again.
+  Between heats A still goes on to the next heat.
+* Event menu: a won event is marked in the list (orange square, "WON") and each event shows its best place
+  (1st / 2nd / 3rd in medal colours), so the unlocked reward / place is visible.
+* Board Designer (main menu, above Options): the player's own board, both faces, used in races and on the
+  menus' rider when switched on (START, or the ON/OFF button; saved in the options, off by default).
+  * Bottom screen: SIDE (top deck / base), PEN, STICKER, FILL, UNDO, ON/OFF; the canvas shows the chosen face
+    at 2x; 16 colours, or the stickers 7 at a time (">>" pages through). L/R brush and sticker size, Y undo,
+    SELECT side, B saves and leaves. The top screen shows both faces, the current one framed.
+  * Stickers: 18 cut at build time from your copy's frontend bitmaps by tools/ds_stickers.py (logos, the
+    FreshGear icons, the snowflake, crosses, the language flags) - nothing of them is in the repository.
+  * The design is a 128 x 128 paletted texture laid out like the riders' boards (the right half the top deck,
+    the left half the base; length along v) and is saved to the card as ssx3gizwipe_board.bin. Its textures are
+    made at boot, before the menus' pictures, so a freed picture can't take the design's VRAM.
+  * The board alone is now face-culled: drawn without culling, its deck and base (a few units apart) fought
+    in the depth buffer at race distance and the base showed through on top. The face culled follows the view
+    (the race's is X-mirrored) and the sign of the board's own matrix (a goofy / switch rider is mirrored).
+* Test harness: dsrun.py takes stylus input (DSTOUCH=1, "T<x>/<y>" tokens in bottom-screen pixels).
+
 ## Not done yet / next
 * Download Play (see stage 41).
