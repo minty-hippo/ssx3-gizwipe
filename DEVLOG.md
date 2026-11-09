@@ -1223,5 +1223,15 @@ screen, away from the large empty areas, every 20 frames over two minutes of R&B
 * Checked on the wrapping-depth melonDS (the hardware's behaviour): no near-plane wraps on the bot's line or off
   the billboard rail.
 
+## Stage 87: the camera on R&B's steep rail (~10 %)
+* Stage 84's rail camera held the pitch within ~17 degrees and trailed the target's height over ~8 steps: right
+  for the billboard staircase, but on the long steady rail at ~10 % (~2800 units, ~50 degrees at its foot) the
+  camera stayed level and its target hung above the rider - the camera looked over the rider as it dropped away.
+  Now the camera takes the rail's slope averaged over ~8 steps (a staircase still averages out, a steady slope is
+  followed), the target's height never trails the rider by more than ~48 units, and all of it applies from the
+  moment the rider locks on to a rail (rail state 1, which on that rail lasts most of the ride), not only once
+  grinding (state 2). On that rail (TEST_GRIND_RAIL=61) the rider now sits at rows ~110-140 of the screen.
+* TEST_GRIND drops the rider onto a rail's high end, heading downhill.
+
 ## Not done yet / next
 * Download Play (see stage 41).

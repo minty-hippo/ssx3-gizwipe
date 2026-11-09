@@ -1238,9 +1238,13 @@ static void cam_step(const Phys *p, int setting, bool pipe)
     if (h2 <= 0x10000) { float a = p->facing * (6.2831853f / 2048.0f); dir[0] = sinf(a); dir[1] = 0; dir[2] = cosf(a); }
     else {
         if (vy * vy > h2 * 0.75f) vy = (vy < 0 ? -1 : 1) * sqrtf(h2 * 0.75f);
-        // port: grinding, the camera takes little of the rail's slope (pitch within ~17 degrees, not ~41): along a
-        // rail going up over R&B's billboards and down again it rode 30..250 units over the rider and back
-        if (p->rail_state && vy * vy > h2 * 0.09f) vy = (vy < 0 ? -1 : 1) * sqrtf(h2 * 0.09f);
+        // port: grinding, the camera takes the rail's slope averaged over ~8 steps: a staircase rail (R&B's over
+        // the billboards: flat, steep, flat...) averages out instead of riding the camera up and down each step,
+        // while a steadily steep rail (R&B ~10 %, ~50 degrees) is still followed - held flat (stage 84), the camera
+        // looked over the rider as it dropped away below
+        static float gslope;
+        float hs = sqrtf(h2), sl = vy / hs;
+        if (p->rail_state) { gslope = (gslope * 7 + sl) / 8; vy = gslope * hs; } else gslope = sl;
         float l = sqrtf(h2 + vy * vy); dir[0] = vx / l; dir[1] = vy / l; dir[2] = vz / l;
     }
     memcpy(camT0, camT, sizeof(camT)); memcpy(camC0, camC, sizeof(camC));
@@ -1256,7 +1260,12 @@ static void cam_step(const Phys *p, int setting, bool pipe)
     // port: grinding, the target's height is averaged over ~8 steps: rails such as R&B's over the billboard tops
     // are staircases (500 units flat, 360 down steeply, again), and the camera stepped up and down with them
     static float grindY;
-    if (p->rail_state == 2) { grindY = (grindY * 7 + T[1]) / 8; camT[1] = grindY; } else grindY = camT[1];
+    if (p->rail_state) {
+        grindY = (grindY * 7 + T[1]) / 8;
+        if (grindY > T[1] + 48) grindY = T[1] + 48;          // (never more than ~48 units off the rider: on a long
+        if (grindY < T[1] - 48) grindY = T[1] - 48;          // steep rail the average trailed far above it)
+        camT[1] = grindY;
+    } else grindY = camT[1];
     camD = d < camD ? (camD * 15 + d) / 16 : (camD * 7 + d) / 8;
     float C[3]; for (int k = 0; k < 3; k++) C[k] = camT[k] - dir[k] * camD;
     if (p->air) C[1] += 96;
@@ -1264,7 +1273,7 @@ static void cam_step(const Phys *p, int setting, bool pipe)
     // port: grinding, the height follows 3x faster: a rail drops far more steeply than the slope (R&B's billboard
     // rail: 11-27 units a frame), and at 1/12 a step the camera hung 150+ units over the rider, then sank back
     // along the flat - up and down along the rail
-    if (p->rail_state == 2) camC[1] = (camC[1] * 3 + C[1]) / 4; else camC[1] = (camC[1] * 11 + C[1]) / 12;   // (C from the averaged target)
+    if (p->rail_state) camC[1] = (camC[1] * 3 + C[1]) / 4; else camC[1] = (camC[1] * 11 + C[1]) / 12;   // (C from the averaged target)
     float e[3] = { camT[0] - camC[0], camT[1] - camC[1], camT[2] - camC[2] }, l = sqrtf(e[0] * e[0] + e[1] * e[1] + e[2] * e[2]);
     if (l > 1) for (int k = 0; k < 3; k++) camC[k] = camT[k] - e[k] / l * camD;
     // 0x75808 (0x6829c against the course): a ray from the target out to the camera; if the course is in the way
@@ -1280,7 +1289,7 @@ static void cam_step(const Phys *p, int setting, bool pipe)
     memcpy(camV0, camV, sizeof(camV)); memcpy(camV, camC, sizeof(camC));
     // (grinding: no occlusion pull - the boards and posts along a rail sweep between rider and camera; pulled in
     // and let out again, the camera lurched at every billboard on R&B's rail)
-    if (p->rail_state == 2) { occ_d = 0; occ_n = 0; }
+    if (p->rail_state) { occ_d = 0; occ_n = 0; }
     else if (p->trk && l > 1) {
         s32 a[3], b[3], h[3], n[3]; int sf = 0;
         float want = 1e9f;
@@ -1825,10 +1834,13 @@ int main(int argc, char **argv)
 #define TEST_GRIND_RAIL 0
 #endif
                     if (race_steps == 40 && trk.nrails > TEST_GRIND_RAIL) {  // test: dropped onto a rail (TEST_GRIND_RAIL), moving along it
-                        const TrackRail *r = &trk.rails[TEST_GRIND_RAIL]; int sg = r->n > 2 ? 1 : 0;
-                        for (int j = 0; j < 3; j++) ph.pos[j] = (r->pts[sg][j] + (j == 1 ? 40 : 0)) << 8;
-                        for (int j = 0; j < 3; j++) ph.vel[j] = r->dir[sg][j] * 3 / 2;
-                        ph.vel[1] = -200; ph.air = true; ph.jstate = 4;
+                        const TrackRail *r = &trk.rails[TEST_GRIND_RAIL];
+                        bool up = r->pts[r->n - 1][1] > r->pts[0][1];      // (from its high end, downhill)
+                        int sg = up ? (r->n > 3 ? r->n - 3 : 0) : (r->n > 2 ? 1 : 0), pi = up ? sg + 1 : sg;
+                        for (int j = 0; j < 3; j++) ph.pos[j] = (r->pts[pi][j] + (j == 1 ? 24 : 0)) << 8;
+                        for (int j = 0; j < 3; j++) ph.vel[j] = (up ? -r->dir[sg][j] : r->dir[sg][j]) * 3 / 2;
+                        if (!up) ph.vel[1] = -200;
+                        ph.air = true; ph.jstate = 4;
                     }
 #endif
 #ifdef TEST_CRASH
@@ -1979,7 +1991,7 @@ int main(int argc, char **argv)
             s32 e[3] = { (s32)rp[0], (s32)rp[1] + 50, (s32)rp[2] }, q[3] = { (s32)cam_pos[0], (s32)cam_pos[1], (s32)cam_pos[2] }, h[3], n[3]; int sf;
             float want = 1;
             float qx = cam_pos[0] - e[0], qy = cam_pos[1] - e[1], qz = cam_pos[2] - e[2], ql = sqrtf(qx * qx + qy * qy + qz * qz);
-            bool grinding = replay ? rpg.ph.rail_state == 2 : ph.rail_state == 2;   // (grinding: not checked - see cam_step)
+            bool grinding = replay ? rpg.ph.rail_state != 0 : ph.rail_state != 0;   // (grinding: not checked - see cam_step)
             if (ql > 1 && !grinding && track_ray(&trk, e, q, h, n, &sf)) {
                 float dx = h[0] - e[0], dy = h[1] - e[1], dz = h[2] - e[2], l = sqrtf(dx * dx + dy * dy + dz * dz);
                 want = l > 30 ? (l - 25) / ql : 0;
