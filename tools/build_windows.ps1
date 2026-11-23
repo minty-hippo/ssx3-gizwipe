@@ -141,8 +141,12 @@ function Find-BlocksDS {
 function Msys($root, $script) {
     # a login shell (so a fresh MSYS2 sets itself up), in the MSYS environment, starting in the repository
     $env:MSYSTEM = 'MSYS'; $env:CHERE_INVOKING = '1'; $env:SSX_REPO = $Repo
-    $script = $script -replace "`r", ''           # (this file may have been checked out with CRLF line ends)
-    & "$root\usr\bin\bash.exe" -lc $script | Out-Host
+    # The script goes through a file: Windows PowerShell 5.1 does not escape double quotes inside an argument it
+    # passes to a program, so "bash -lc <script with quotes>" reached bash mangled.
+    $file = Join-Path $Work 'msys_step.sh'
+    $text = ($script -replace "`r", '') + "`n"    # (LF only: this .ps1 may have been checked out with CRLF)
+    [System.IO.File]::WriteAllText($file, $text, (New-Object System.Text.UTF8Encoding $false))
+    & "$root\usr\bin\bash.exe" --login ($file -replace '\\', '/') | Out-Host
     return $LASTEXITCODE
 }
 Say 'BlocksDS'
