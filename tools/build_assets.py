@@ -31,13 +31,20 @@ def index_files(root):
 
 def locate(files):
     """the paks and the exe, wherever the game's folder sits inside what was given"""
-    exe = [k for k in files if k.endswith('ssx_3.exe')]
-    if not exe: raise SystemExit('ssx_3.exe not found in the Gizmondo files')
-    pre = exe[0][:-len('ssx_3.exe')]
+    # the exe's name varies between copies ("ssx_3.exe", "SSX 3.exe", "ssx-3.exe", ...): compare without the separator,
+    # and failing that take the one .exe sitting next to models/tracks.pak
+    base = lambda k: k.rsplit('/', 1)[-1]
+    exe = [k for k in files if base(k).replace(' ', '').replace('_', '').replace('-', '') == 'ssx3.exe']
+    if not exe:
+        dirs = {k[:-len('models/tracks.pak')] for k in files if k.endswith('models/tracks.pak')}
+        exe = [k for k in files if k.endswith('.exe') and k[:len(k) - len(base(k))] in dirs]
+    if not exe: raise SystemExit('the game\'s exe (ssx_3.exe / SSX 3.exe) not found in the Gizmondo files')
+    if len(exe) > 1: exe.sort(key=lambda k: (k.count('/'), k))
+    pre = exe[0][:len(exe[0]) - len(base(exe[0]))]
     paks = {}
     for rel, sub in PAKS.items():
         cand = [k for k in files if k == pre + rel] or [k for k in files if k.endswith('/' + rel) or k == rel]
-        if not cand: raise SystemExit(f'{rel} not found next to ssx_3.exe')
+        if not cand: raise SystemExit(f'{rel} not found next to the exe')
         paks[sub] = files[cand[0]]
     return files[exe[0]], paks
 

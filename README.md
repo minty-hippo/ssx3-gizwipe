@@ -12,7 +12,7 @@ files into the DS formats, then the DS program is compiled around them.
 - **The Gizmondo SSX 3 files**, as a `.zip` or a folder. The script looks for these files, either at the top or one
   folder down (for example `gzga200026/`):
   ```
-  ssx_3.exe
+  ssx_3.exe  (or "SSX 3.exe": any spelling of the name works)
   models/tracks.pak     models/characters.pak   models/sprites.pak   models/gst.pak
   frontend/bitmaps.pak  frontend/fonts.pak
   wav/snd.pak
