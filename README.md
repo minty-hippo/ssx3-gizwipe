@@ -1,5 +1,4 @@
 # SSX 3 GizWipe
-<img width="717" height="540" alt="menu" src="https://github.com/user-attachments/assets/53482144-84b7-4149-8d7d-b90e8842cbd9" />
 
 A port of the **Gizmondo** release of EA's *SSX 3* to the **Nintendo DS**, written from scratch in C for the DS hardware.
 It runs on real hardware (flashcarts) and in emulators such as melonDS.
@@ -9,9 +8,6 @@ code from the original game here. You build the ROM from your own copy of the Gi
 files into the DS formats, then the DS program is compiled around them.
 
 ## Features
-<img width="636" height="540" alt="gameplay2" src="https://github.com/user-attachments/assets/3dddb4f0-d0d1-45bc-810e-720e389b0ecd" />
-<img width="722" height="540" alt="riderSelect" src="https://github.com/user-attachments/assets/7af1fb0e-f7cb-4601-b116-518f5b7d5f43" />
-<img width="717" height="540" alt="boardDesigner" src="https://github.com/user-attachments/assets/3cf7bae2-c567-49c4-a777-a38947123e35" />
 
 **The game**
 - All the Gizmondo version's courses and riders, rebuilt for the DS's 3D hardware with level-of-detail, fog and
