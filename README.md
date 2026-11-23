@@ -7,31 +7,44 @@ It runs on real hardware (flashcarts) and in emulators such as melonDS.
 code from the original game here. You build the ROM from your own copy of the Gizmondo game: a script converts its
 files into the DS formats, then the DS program is compiled around them.
 
-## What you need
-
-- **The Gizmondo SSX 3 files**, as a `.zip` or a folder. The script looks for these files, either at the top or one
-  folder down (for example `gzga200026/`):
-  ```
-  ssx_3.exe  (or "SSX 3.exe": any spelling of the name works)
-  models/tracks.pak     models/characters.pak   models/sprites.pak   models/gst.pak
-  frontend/bitmaps.pak  frontend/fonts.pak
-  wav/snd.pak
-  ```
-- **[BlocksDS](https://blocksds.skylyrac.net/)** (the DS SDK), installed and on your environment
-  (`BLOCKSDS` pointing at it). Linux, macOS and Windows (MSYS2/WSL) all work.
-- **Python 3.9+** with `numpy` and `Pillow` (`pip install numpy pillow`).
-- **ffmpeg** on your `PATH` (for the sound effects and music).
-
 ## Building
+
+You need your own copy of the **Gizmondo SSX 3 files**, as a `.zip` or a folder. The build looks for these, either
+at the top or one folder down (for example `gzga200026/`):
+```
+ssx_3.exe  (or "SSX 3.exe": any spelling of the name works)
+models/tracks.pak     models/characters.pak   models/sprites.pak   models/gst.pak
+frontend/bitmaps.pak  frontend/fonts.pak
+wav/snd.pak
+```
+
+### Windows
+
+Download this repository (Code > Download ZIP) and unzip it, then **drag your SSX 3 zip onto `build.bat`** (or
+double-click `build.bat` and pick the zip). On the first run it installs whatever is missing, for your user, with
+winget: Python with numpy and Pillow, ffmpeg, MSYS2, and the BlocksDS SDK. That takes a while, once. Converting the
+game files takes about 5 minutes. The ROM, `ssx3_gizwipe.nds`, ends up next to `build.bat`.
+
+Later builds remember the zip and skip the conversion when nothing has changed (`build.bat -Rebuild` forces it).
+
+### Linux / macOS
+
+Install Python 3.9+, ffmpeg and [BlocksDS](https://blocksds.skylyrac.net/docs/setup/), then:
 
 ```sh
 git clone https://github.com/minty-hippo/ssx3-gizwipe.git
 cd ssx3-gizwipe
-python3 tools/build_assets.py /path/to/ssx3_gizmondo.zip      # about 5 minutes
-make -C ds_runtime
+./build.sh /path/to/ssx3_gizmondo.zip
 ```
 
-The ROM is `ds_runtime/ssx3_gizwipe.nds`.
+`build.sh` installs numpy and Pillow if they're missing, converts the game files and compiles `ssx3_gizwipe.nds`.
+
+### By hand
+
+```sh
+python3 tools/build_assets.py /path/to/ssx3_gizmondo.zip      # needs numpy, Pillow and ffmpeg; about 5 minutes
+make -C ds_runtime                                            # needs BlocksDS ($BLOCKSDS)
+```
 
 `build_assets.py` writes:
 - the converted game data to `ds_runtime/nitrofs/`, which is packed into the ROM;
