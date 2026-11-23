@@ -13,6 +13,7 @@ top or one folder down (e.g. gzga200026/). Nothing of the game is kept in this r
 needs: Python 3.9+, numpy, Pillow, ffmpeg on PATH (sound effects and music)
 """
 import os, sys, glob, shutil, zipfile, argparse, time, subprocess, tempfile
+import importlib.util
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 REPO = os.path.dirname(HERE)
