@@ -60,6 +60,10 @@ def main():
     ap.add_argument('--out', default=os.path.join(REPO, 'ds_runtime'))
     a = ap.parse_args()
     if not shutil.which('ffmpeg'): raise SystemExit('ffmpeg is needed on PATH (sound effects and music)')
+    missing = [pkg for mod, pkg in (('numpy', 'numpy'), ('PIL', 'pillow')) if importlib.util.find_spec(mod) is None]
+    if missing:   # (checked up front: Pillow is first needed only after several minutes of conversion)
+        raise SystemExit(f'missing Python packages: {" ".join(missing)} - install with: python3 -m pip install {" ".join(missing)}'
+                         f'  (or your distro\'s package, e.g. python3-pil / python3-numpy)')
     work = os.path.abspath(a.work); os.makedirs(work, exist_ok=True)
 
     # 1. the game: a zip is unpacked first
