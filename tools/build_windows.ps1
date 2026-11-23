@@ -211,6 +211,20 @@ if [ ! -d /opt/wonderful/toolchain/gcc-arm-none-eabi/bin ] && [ -d /opt/devkitpr
     export ARM_NONE_EABI_PATH=/opt/devkitpro/devkitARM/bin/
 fi
 command -v make >/dev/null || pacman -S --needed --noconfirm make
+# The Wonderful toolchain's gcc is a native Windows program that needs the MinGW C++ runtime (libstdc++-6.dll and
+# friends). Use a copy shipped with Wonderful if there is one, otherwise MSYS2's UCRT64 runtime, installed if missing.
+gcc_ok() { "`${ARM_NONE_EABI_PATH:-/opt/wonderful/toolchain/gcc-arm-none-eabi/bin/}arm-none-eabi-gcc" --version >/dev/null 2>&1; }
+if ! gcc_ok; then
+    for d in `$(find /opt/wonderful -name 'libstdc++-6.dll' -printf '%h\n' 2>/dev/null | sort -u); do export PATH="`$d:`$PATH"; done
+fi
+if ! gcc_ok; then
+    [ -f /ucrt64/bin/libstdc++-6.dll ] || pacman -S --needed --noconfirm mingw-w64-ucrt-x86_64-gcc-libs
+    export PATH="/ucrt64/bin:`$PATH"
+fi
+if ! gcc_ok; then
+    for d in /mingw64/bin /clang64/bin; do if [ -f `$d/libstdc++-6.dll ]; then export PATH="`$d:`$PATH"; fi; done
+fi
+gcc_ok || { echo "arm-none-eabi-gcc still does not start:"; "`${ARM_NONE_EABI_PATH:-/opt/wonderful/toolchain/gcc-arm-none-eabi/bin/}arm-none-eabi-gcc" --version; exit 1; }
 make -j`$(nproc)
 "@
 if ($rc -ne 0) { Fail 'the DS program did not compile (see the messages above).' }
