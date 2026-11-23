@@ -7,6 +7,30 @@ It runs on real hardware (flashcarts) and in emulators such as melonDS.
 code from the original game here. You build the ROM from your own copy of the Gizmondo game: a script converts its
 files into the DS formats, then the DS program is compiled around them.
 
+## Features
+
+**The game**
+- All the Gizmondo version's courses and riders, rebuilt for the DS's 3D hardware with level-of-detail, fog and
+  far-tree impostors to hold a steady frame rate.
+- The original rider physics, tricks and scoring, ported from the Gizmondo program: grabs, tweaks, flips and spins,
+  rail grinds, uber tricks, combos, the boost meter and SUPER UBER.
+- CPU riders that race, punch and knock you down, with full wipeouts and recovery.
+- **Modes:** Conquer The Mountain (career, with rider attributes and progression), Single Event, Shadow Racing, and
+  local wireless Multiplayer between two DS systems.
+- Replays with rewind and playback controls, records, a Shadow Manager and Watch Shadow.
+- The game's own front end: rider select and profiles, track select, options, pause menu, five languages.
+- The music, with an EA Trax style song strip, a new song per course, and Radio BIG.
+
+**Made for the DS**
+- Two screens: the race on top, and a trail map, live standings and the current song on the bottom.
+- **Board designer:** paint your own board (top and bottom) with the stylus, with a pen, eraser, fill and undo,
+  and place stickers you can move, scale and rotate with the buttons or the stylus.
+- **Voice Clips:** record your own sounds with the microphone for SUPER UBER, race wins, passes and knockdowns,
+  with pitch, autotune, chorus, echo, tone and filter controls, mixed in with the game's sounds.
+- Rumble Pak support.
+- Saves, shadows, voice clips and boards are kept on the flashcart (`ssx3gizwipe*` files next to the ROM).
+- Runs on real hardware (flashcarts, DSi / 3DS / 2DS) and in emulators such as melonDS.
+
 ## Building
 
 You need your own copy of the **Gizmondo SSX 3 files**, as a `.zip` or a folder. The build looks for these, either
@@ -54,7 +78,7 @@ make -C ds_runtime                                            # needs BlocksDS (
 All of these are ignored by git. If a text check fails, the exe is not the Gizmondo `ssx_3.exe` this port was made
 from.
 
-## Playing
+## Controls
 
 | Key | On the snow | In the air | On a rail |
 |---|---|---|---|
@@ -65,17 +89,6 @@ from.
 | B | boost | while grabbing: tweak / uber trick | boost |
 | L, R, X, Y | | grabs (other grabs for combos) | |
 | Start | pause | | |
-
-**Modes:** Conquer The Mountain (career), Single Event, Shadow Racing and local wireless Multiplayer (2 DS).
-
-**Extras for the DS:**
-- The bottom screen shows a trail map, the standings and the current song.
-- Rumble Pak support.
-- Five languages.
-- **Voice Clips:** record your own sounds with the DS microphone for SUPER UBER, race wins, passes and knockdowns.
-  Each clip has pitch, autotune, chorus and echo sliders.
-
-Saves, shadows and voice clips go to `ssx3gizwipe*` files next to the ROM, when the DS has a FAT card.
 
 ## Repository layout
 
